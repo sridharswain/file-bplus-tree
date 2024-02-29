@@ -9,11 +9,12 @@ import (
 // "slices"
 
 func main() {
-	var page *DataPage[int, int] = newDataPage[int, int](nil, nil)
+	var tree *BTree[int, int] = New[int, int](3)
 
-	page.insert(1, 2, nil)
-	page.insert(5, 6, nil)
-	page.insert(3, 4, nil)
+	tree.Put(1, 100)
+	tree.Put(2, 99)
+	tree.Put(3, 98)
+	tree.Put(4, 97)
 
-	log.Println(fmt.Sprintf("%s", page.container))
+	log.Println(fmt.Sprintf("%s", tree.root))
 }
