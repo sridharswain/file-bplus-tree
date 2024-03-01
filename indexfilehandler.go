@@ -13,13 +13,17 @@ const (
 )
 
 const (
-	METADATA_SIZE    = 2 * 1024
-	INDEX_BLOCK_SIZE = 4 * 1024
-	PAGE_BLOCK_SIZE  = 4 * 1024
+	METADATA_SIZE    = 1 * 1024
+	INDEX_BLOCK_SIZE = 1 * 1024
+	PAGE_BLOCK_SIZE  = 1 * 1024
 )
 
+type PageBlockType struct {
+	PageType string
+}
+
 type PageBlock[TKey cmp.Ordered, TValue any] interface {
-	*DataPage[TKey, TValue] | *IndexPage[TKey, TValue] | *BTree[TKey, TValue]
+	*DataPage[TKey, TValue] | *IndexPage[TKey, TValue] | *BTree[TKey, TValue] | *PageBlockType
 }
 
 func SaveAt[TKey cmp.Ordered, TValue any, TTPage PageBlock[TKey, TValue]](indexName string, page TTPage, offset int, length int) {
@@ -58,7 +62,7 @@ func SaveMetadata[TKey cmp.Ordered, TValue any](indexName string, page *BTree[TK
 	SaveAt[TKey, TValue](indexName, page, 0, METADATA_SIZE)
 }
 
-func ReadAt[TKey cmp.Ordered, TValue any, TTPage PageBlock[TKey, TValue]](indexName string, page TTPage, offset int, length int) {
+func ReadAt[TKey cmp.Ordered, TValue any, TTPage PageBlock[TKey, TValue]](indexName string, page TTPage, offset int, length int) []byte {
 	file, err := os.OpenFile(indexName, os.O_RDONLY, os.ModePerm)
 
 	if err != nil {
@@ -76,11 +80,13 @@ func ReadAt[TKey cmp.Ordered, TValue any, TTPage PageBlock[TKey, TValue]](indexN
 	var dataToRead []byte = make([]byte, len(jsonBytes))
 	copy(dataToRead, jsonBytes)
 
-	err = json.Unmarshal(jsonBytes, page)
+	err = json.Unmarshal(dataToRead, page)
 
 	if err != nil {
 		panic(err)
 	}
+
+	return jsonBytes
 }
 
 func ReadDataPage[TKey cmp.Ordered, TValue any](tree *BTree[TKey, TValue], page *DataPage[TKey, TValue], offset int) {

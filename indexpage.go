@@ -5,50 +5,67 @@ import (
 )
 
 type IndexNode[TKey cmp.Ordered] struct {
-	key TKey
+	Key TKey
 }
 
 type IndexPage[TKey cmp.Ordered, TValue any] struct {
-	count          int
-	container      []*IndexNode[TKey]
-	next, previous *IndexPage[TKey, TValue]
-	children       []any
-	parent         *IndexPage[TKey, TValue]
+	tree           *BTree[TKey, TValue]
+	Count          int
+	Container      []*IndexNode[TKey]
+	Next, Previous int
+	Children       []int
+	IsChildrenDataPage bool
+	Parent         int
+	Offset         int
+	PageType       string
 }
 
-func (ip *IndexPage[TKey, TValue]) find(key TKey) (*DataNode[TKey, TValue], bool) {
-	index, _ := binarySearchPage[TKey, TValue](ip.container, key)
-	child := ip.children[index]
-	switch x := child.(type) {
-	case *IndexPage[TKey, TValue]:
-		return x.find(key)
-	case *DataPage[TKey, TValue]:
-		return x.find(key)
-	}
-	return nil, false
-}
+// func (ip *IndexPage[TKey, TValue]) find(key TKey) (*DataNode[TKey, TValue], bool) {
+// 	index, _ := binarySearchPage[TKey, TValue](ip.container, key)
+// 	child := ip.children[index]
+// 	switch x := child.(type) {
+// 	case *IndexPage[TKey, TValue]:
+// 		return x.find(key)
+// 	case *DataPage[TKey, TValue]:
+// 		return x.find(key)
+// 	}
+// 	return nil, false
+// }
 
 func newIndexNode[TKey cmp.Ordered](key TKey) *IndexNode[TKey] {
 	return &IndexNode[TKey]{
-		key: key,
+		Key: key,
 	}
 }
 
 func newIndexPage[TKey cmp.Ordered, TValue any](tree *BTree[TKey, TValue]) *IndexPage[TKey, TValue] {
-
-	return &IndexPage[TKey, TValue]{
-		count:     0,
-		container: make([]*IndexNode[TKey], tree.order),
-		children:  make([]any, tree.order+1),
+	newIndexPage := &IndexPage[TKey, TValue]{
+		tree:           tree,
+		Count:          0,
+		Container:      make([]*IndexNode[TKey], tree.Order),
+		Children:       make([]int, tree.Order+1),
+		IsChildrenDataPage: false,
+		PageType:       INDEX_PAGE,
+		Parent:         -1,
+		Next:           -1,
+		Previous:       -1,
 	}
+
+	for i := 0; i < len(newIndexPage.Children); i++ {
+		newIndexPage.Children[i] = -1
+	}
+
+	SaveIndexPage[TKey, TValue](tree.indexName, newIndexPage, tree.LatestOffset)
+	tree.LatestOffset += INDEX_BLOCK_SIZE
+	return newIndexPage
 }
 
-func (ip *IndexPage[TKey, TValue]) isFull(tree *BTree[TKey, TValue]) bool {
-	return ip.count == tree.maxIndexCount
+func (ip *IndexPage[TKey, TValue]) isFull() bool {
+	return ip.Count == ip.tree.MaxIndexCount
 }
 
 func (ip *IndexPage[TKey, TValue]) insertSorted(key TKey) (int, bool) {
-	index, found := binarySearchPage[TKey, TValue](ip.container, key)
+	index, found := binarySearchPage[TKey, TValue](ip.Container, key)
 
 	if !found {
 		// Key is not found
@@ -61,40 +78,44 @@ func (ip *IndexPage[TKey, TValue]) insertSorted(key TKey) (int, bool) {
 }
 
 func (ip *IndexPage[TKey, TValue]) insertAt(index int, key TKey) {
-	if ip.container[index] != nil {
+	if ip.Container[index] != nil {
 		// if the index is not null means, there is data in the place where the ket should have been.
-		copy(ip.container[index+1:], ip.container[index:])
+		copy(ip.Container[index+1:], ip.Container[index:])
 	}
-	ip.container[index] = newIndexNode(key)
-	ip.count++
+	ip.Container[index] = newIndexNode(key)
+	ip.Count++
+	SaveIndexPage[TKey, TValue](ip.tree.indexName, ip, ip.Offset)
 }
 
 func (ip *IndexPage[TKey, TValue]) deleteAt(index int) {
-	ip.container[index] = nil
-	ip.count--
+	ip.Container[index] = nil
+	ip.Count--
 }
 
-func (ip *IndexPage[TKey, TValue]) insertChildAt(index int, child any) {
-	if ip.children[index] != nil {
+func (ip *IndexPage[TKey, TValue]) insertChildAt(index int, child int) {
+	if ip.Children[index] != -1 {
 		// if the index is not null means, there is data in the place where the ket should have been.
-		copy(ip.children[index+1:], ip.children[index:])
+		copy(ip.Children[index+1:], ip.Children[index:])
 	}
-	ip.children[index] = child
+	ip.Children[index] = child
 }
 
 func (ip *IndexPage[TKey, TValue]) deleteChildAt(index int) {
-	ip.children[index] = nil
+	ip.Children[index] = -1
 }
 
-func (ip *IndexPage[TKey, TValue]) split(tree *BTree[TKey, TValue]) *IndexPage[TKey, TValue] {
-	splitDict := newIndexPage[TKey, TValue](tree)
+func (ip *IndexPage[TKey, TValue]) split() *IndexPage[TKey, TValue] {
+	splitDict := newIndexPage[TKey, TValue](ip.tree)
 
 	// Create a new data page and copy second half data
-	splitDict.count = copy(splitDict.container[0:], ip.container[tree.midPoint+1:])
-	for i := tree.midPoint; i < tree.order; i++ {
+	splitDict.Count = copy(splitDict.Container[0:], ip.Container[ip.tree.MidPoint+1:])
+	splitDict.IsChildrenDataPage = ip.IsChildrenDataPage
+	for i := ip.tree.MidPoint; i < ip.tree.Order; i++ {
 		ip.deleteAt(i)
 	}
 
+	SaveIndexPage[TKey, TValue](ip.tree.indexName, ip, ip.Offset)
+	SaveIndexPage[TKey, TValue](ip.tree.indexName, splitDict, splitDict.Offset)
 	return splitDict
 }
 
@@ -102,8 +123,10 @@ func (ip *IndexPage[TKey, TValue]) splitChildrenFrom(newIndexPage *IndexPage[TKe
 	tree *BTree[TKey, TValue]) {
 
 	// Create a new data page and copy second half data
-	copy(newIndexPage.children[0:], ip.children[tree.midPoint+1:])
-	for i := tree.midPoint + 1; i < tree.order + 1; i++ {
+	copy(newIndexPage.Children[0:], ip.Children[tree.MidPoint+1:])
+	for i := tree.MidPoint + 1; i < tree.Order+1; i++ {
 		ip.deleteChildAt(i)
 	}
+	SaveIndexPage[TKey, TValue](ip.tree.indexName, ip, ip.Offset)
+	SaveIndexPage[TKey, TValue](ip.tree.indexName, newIndexPage, newIndexPage.Offset)
 }

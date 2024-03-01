@@ -14,185 +14,229 @@ type TNode[TKey cmp.Ordered, TValue any] interface {
 }
 
 type BTree[TKey cmp.Ordered, TValue any] struct {
-	count int
-	order int
+	indexName string
+	Count     int
+	Order     int
 
-	leafLength   int
-	minLeafCount int
-	maxLeafCount int
+	LeafLength   int
+	MinLeafCount int
+	MaxLeafCount int
 
-	minIndexCount int
-	maxIndexCount int
+	MinIndexCount int
+	MaxIndexCount int
 
-	midPoint int
+	MidPoint int
 
-	root any
+	root       any
+	RootOffset int
 
-	first, last *DataPage[TKey, TValue]
+	First, Last int
+
+	IsLeaf       bool
+	LatestOffset int
 }
 
-func New[TKey cmp.Ordered, TValue any](order int) *BTree[TKey, TValue] {
+func New[TKey cmp.Ordered, TValue any](indexName string, order int) *BTree[TKey, TValue] {
 	newTree := &BTree[TKey, TValue]{
-		count:    0,
-		order:    order,
-		midPoint: int(math.Ceil((float64(order)+1)/2.0) - 1),
+		RootOffset: METADATA_SIZE,
+		indexName:  indexName,
+		Count:      0,
+		Order:      order,
+		MidPoint:   int(math.Ceil((float64(order)+1)/2.0) - 1),
 
-		leafLength:   order,
-		maxLeafCount: order - 1,
-		minLeafCount: int(math.Ceil(float64(order)/2.0) - 1),
+		LeafLength:   order,
+		MaxLeafCount: order - 1,
+		MinLeafCount: int(math.Ceil(float64(order)/2.0) - 1),
 
-		maxIndexCount: order,
-		minIndexCount: int(math.Ceil(float64(order) / 2.0)),
+		MaxIndexCount: order,
+		MinIndexCount: int(math.Ceil(float64(order) / 2.0)),
+		IsLeaf:        true,
 		// TODO update First and last
 	}
-	newTree.root = newDataPage[TKey, TValue](nil, newTree)
+	SaveMetadata[TKey, TValue](indexName, newTree)
+	newTree.LatestOffset += METADATA_SIZE
+	newTree.root = newDataPage[TKey, TValue](newTree)
 	return newTree
 }
 
 func (tree *BTree[TKey, TValue]) findDataPageFromIndexRoot(key TKey) *DataPage[TKey, TValue] {
-	var currentPage any = tree.root
+	var currentPageOffset int = tree.RootOffset
+
+	if tree.IsLeaf {
+		var rootDataPage DataPage[TKey, TValue]
+		ReadDataPage(tree, &rootDataPage, currentPageOffset)
+		return &rootDataPage
+	}
 
 	for {
-		switch indexPage := currentPage.(type) {
-		case *IndexPage[TKey, TValue]:
-			index, _ := binarySearchPage[TKey, TValue](indexPage.container, key)
-			currentPage = indexPage.children[index]
-			continue
-		case *DataPage[TKey, TValue]:
-			return indexPage
+		var currentIndexPage IndexPage[TKey, TValue]
+		ReadIndexPage(tree, &currentIndexPage, currentPageOffset)
+		index, _ := binarySearchPage[TKey, TValue](currentIndexPage.Container, key)
+
+		if currentIndexPage.IsChildrenDataPage {
+			var dataPage DataPage[TKey, TValue]
+			ReadDataPage(tree, &dataPage, currentIndexPage.Children[index])
+			return &dataPage
+		} else {
+			currentPageOffset = currentIndexPage.Children[index]
 		}
 	}
 }
 
-func (tree *BTree[TKey, TValue]) insertToLeafNode(dataPage *DataPage[TKey, TValue], key TKey, value TValue) (int, bool /*isSuccessfullyUpdated*/) {
+func (tree *BTree[TKey, TValue]) insertToLeafNode(dataPage *DataPage[TKey, TValue], key TKey, value TValue) (int, bool /*isFull*/) {
 	_, shouldBeAt, alreadyExists := dataPage.findAndUpdateIfExists(key, value)
 
 	if alreadyExists {
 		// TODO Handle Updated
-		return shouldBeAt, true
+		return shouldBeAt, false
 	} else {
-		if dataPage.isFull(tree) {
-			return shouldBeAt, false
+		if dataPage.isFull() {
+			return shouldBeAt, true
 		} else {
 			dataPage.insertAt(shouldBeAt, key, value)
-			return shouldBeAt, true
+			return shouldBeAt, false
 		}
 	}
 }
 
 func (tree *BTree[TKey, TValue]) splitAndPushIndexPage(indexPage *IndexPage[TKey, TValue]) *IndexPage[TKey, TValue] {
-	parent := indexPage.parent
-	newParentKey := indexPage.container[tree.midPoint]
+	parentOffset := indexPage.Parent
+	newParentKey := indexPage.Container[tree.MidPoint]
 
-	newIndexHalf := indexPage.split(tree)
+	newIndexHalf := indexPage.split()
 	indexPage.splitChildrenFrom(newIndexHalf, tree)
 
-	for _, child := range newIndexHalf.children {
-		if child != nil {
-			switch x := child.(type) {
-			case *IndexPage[TKey, TValue]:
-				x.parent = newIndexHalf
-			case *DataPage[TKey, TValue]:
-				x.parent = newIndexHalf
+	for _, child := range newIndexHalf.Children {
+		if child != -1 {
+			if newIndexHalf.IsChildrenDataPage {
+				var childDataPage DataPage[TKey, TValue]
+				ReadDataPage(tree, &childDataPage, child)
+				childDataPage.Parent = newIndexHalf.Offset
+				SaveDataPage(tree.indexName, &childDataPage, childDataPage.Offset)
+			} else {
+				var childIndexPage IndexPage[TKey, TValue]
+				ReadIndexPage(tree, &childIndexPage, child)
+				childIndexPage.Parent = newIndexHalf.Offset
+				SaveIndexPage(tree.indexName, &childIndexPage, childIndexPage.Offset)
 			}
 		}
 	}
 
-	newIndexHalf.next = indexPage.next
-	if newIndexHalf.next != nil {
-		newIndexHalf.next.previous = newIndexHalf
+	newIndexHalf.Next = indexPage.Next
+	if newIndexHalf.Next != -1 {
+		var nextIndexSibling IndexPage[TKey, TValue]
+		ReadIndexPage(tree, &nextIndexSibling, newIndexHalf.Next)
+		nextIndexSibling.Previous = newIndexHalf.Offset
+		SaveIndexPage(tree.indexName, &nextIndexSibling, nextIndexSibling.Offset)
 	}
-	indexPage.next = newIndexHalf
-	newIndexHalf.previous = indexPage
+	indexPage.Next = newIndexHalf.Offset
+	newIndexHalf.Previous = indexPage.Offset
 
-	if parent == nil {
-		parent = newIndexPage[TKey](tree)
-		parent.insertAt(0, newParentKey.key)
-		parent.insertChildAt(0, indexPage)
-		parent.insertChildAt(1, newIndexHalf)
-		indexPage.parent = parent
+	var parentIndexPage IndexPage[TKey, TValue]
+	if parentOffset == -1 {
+		parentIndexPage = *newIndexPage[TKey](tree)
+		parentIndexPage.insertAt(0, newParentKey.Key)
+		parentIndexPage.insertChildAt(0, indexPage.Offset)
+		parentIndexPage.insertChildAt(1, newIndexHalf.Offset)
+		indexPage.Parent = parentIndexPage.Offset
 
-		tree.root = parent
+		tree.root = &parentIndexPage
+		tree.RootOffset = parentIndexPage.Offset
+		SaveMetadata(tree.indexName, tree)
 	} else {
-		insertedAt, _ := parent.insertSorted(newParentKey.key)
-		parent.insertChildAt(insertedAt+1, newIndexHalf)
+		ReadIndexPage(tree, &parentIndexPage, parentOffset)
+		insertedAt, _ := parentIndexPage.insertSorted(newParentKey.Key)
+		parentIndexPage.insertChildAt(insertedAt+1, newIndexHalf.Offset)
 	}
-	newIndexHalf.parent = parent
+	newIndexHalf.Parent = parentOffset
+	SaveIndexPage(tree.indexName, indexPage, indexPage.Offset)
+	SaveIndexPage(tree.indexName, &parentIndexPage, parentIndexPage.Offset)
+	SaveIndexPage(tree.indexName, newIndexHalf, newIndexHalf.Offset)
 
-	return parent
+	return &parentIndexPage
 }
 
 func (tree *BTree[TKey, TValue]) splitAndPushDataPage(dataPage *DataPage[TKey, TValue]) *IndexPage[TKey, TValue] {
-	newDataPage := dataPage.split(tree)
+	newDataPage := dataPage.split()
 
-	var parent *IndexPage[TKey, TValue]
+	var parent IndexPage[TKey, TValue]
 
-	if dataPage.parent == nil {
-		parent = newIndexPage[TKey](tree)
-		dataPage.parent = parent
-		dataPage.parent.insertAt(0, newDataPage.container[0].key)
+	if dataPage.Parent == -1 {
+		parent = *newIndexPage[TKey](tree)
+		dataPage.Parent = parent.Offset
+		parent.IsChildrenDataPage = true
+		parent.insertAt(0, newDataPage.Container[0].Key)
 
-		dataPage.parent.insertChildAt(0, dataPage)    // at 0 will be the old page
-		dataPage.parent.insertChildAt(1, newDataPage) // at 1 will be the new page
+		parent.insertChildAt(0, dataPage.Offset)    // at 0 will be the old page
+		parent.insertChildAt(1, newDataPage.Offset) // at 1 will be the new page
 	} else {
 		// If a parent already exists
-		parent = dataPage.parent
-		newLeafIndex, _ := parent.insertSorted(newDataPage.container[0].key) // TODO check how it handles if parent is full
-		parent.insertChildAt(newLeafIndex+1, newDataPage)
+		ReadIndexPage(tree, &parent, dataPage.Parent)
+		newLeafIndex, _ := parent.insertSorted(newDataPage.Container[0].Key) // TODO check how it handles if parent is full
+		parent.insertChildAt(newLeafIndex+1, newDataPage.Offset)
 	}
+	SaveIndexPage[TKey, TValue](tree.indexName, &parent, parent.Offset)
 
 	// Set parent for the new page
-	newDataPage.parent = parent
+	newDataPage.Parent = parent.Offset
 
-	newDataPage.next = dataPage.next
-	if newDataPage.next != nil {
-		newDataPage.next.previous = dataPage
+	newDataPage.Next = dataPage.Next
+	if newDataPage.Next != -1 {
+		var nextDataPage DataPage[TKey, TValue]
+		ReadDataPage[TKey, TValue](tree, &nextDataPage, newDataPage.Next)
+		nextDataPage.Previous = dataPage.Offset
+		SaveDataPage[TKey, TValue](tree.indexName, &nextDataPage, nextDataPage.Offset)
 	}
 
-	dataPage.next = newDataPage
-	newDataPage.previous = dataPage
+	dataPage.Next = newDataPage.Offset
+	newDataPage.Previous = dataPage.Offset
+	SaveDataPage[TKey, TValue](tree.indexName, dataPage, dataPage.Offset)
+	SaveDataPage[TKey, TValue](tree.indexName, newDataPage, newDataPage.Offset)
 
-	currentParent := parent
+	currentParent := &parent
 	for currentParent != nil {
-		if currentParent.isFull(tree) {
+		if currentParent.isFull() {
 			currentParent = tree.splitAndPushIndexPage(currentParent)
 		} else {
 			break
 		}
 	}
 
-	return parent
+	return &parent
 }
 
 func (tree *BTree[TKey, TValue]) Put(key TKey, value TValue) {
 	switch rootNode := tree.root.(type) {
 	case *DataPage[TKey, TValue]:
-		shouldBeAt, isUpdated := tree.insertToLeafNode(rootNode, key, value)
-		if !isUpdated {
+		shouldBeAt, isFull := tree.insertToLeafNode(rootNode, key, value)
+		if isFull {
 			rootNode.insertAt(shouldBeAt, key, value)
 			rootPage := tree.splitAndPushDataPage(rootNode)
+			tree.RootOffset = rootPage.Offset
+			tree.IsLeaf = false
 			tree.root = rootPage
+			SaveMetadata[TKey, TValue](tree.indexName, tree)
 		}
 	case *IndexPage[TKey, TValue]:
 		// Find data page
 		dataPageToInsert := tree.findDataPageFromIndexRoot(key)
-		shouldBeAt, isUpdated := tree.insertToLeafNode(dataPageToInsert, key, value)
-		if !isUpdated {
+		shouldBeAt, isFull := tree.insertToLeafNode(dataPageToInsert, key, value)
+		if isFull {
 			dataPageToInsert.insertAt(shouldBeAt, key, value)
 			tree.splitAndPushDataPage(dataPageToInsert)
 		}
 	}
 }
 
-func (tree *BTree[TKey, TValue]) Get(key TKey) (value *TValue, exists bool) {
-	dataPage := tree.findDataPageFromIndexRoot(key)
-	dataNodeIndex, found := binarySearchPage[TKey, TValue](dataPage.container, key)
+// func (tree *BTree[TKey, TValue]) Get(key TKey) (value *TValue, exists bool) {
+// 	dataPage := tree.findDataPageFromIndexRoot(key)
+// 	dataNodeIndex, found := binarySearchPage[TKey, TValue](dataPage.Container, key)
 
-	if found {
-		return &dataPage.container[dataNodeIndex].value, true
-	}
-	return nil, false
-}
+// 	if found {
+// 		return &dataPage.Container[dataNodeIndex].Value, true
+// 	}
+// 	return nil, false
+// }
 
 func (tree *BTree[TKey, TValue]) Seek(key TKey) (value TValue, exists bool) {
 	return

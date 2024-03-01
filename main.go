@@ -4,20 +4,28 @@ import (
 	"fmt"
 	"log"
 	"time"
-	// "slices"
 )
 
-// "slices"
-
 func main() {
-	var tree *BTree[int, int] = New[int, int](1024)
+	tree := New[int, int]("hello", 10)
+
 	timer := time.Now()
 
-	total := 1000000000
-	// log.Println(fmt.Sprintf("%s asdfa %s", 1, 2))
-	for i := 0; i < total; i++ {
-		tree.Put(i, i+1)
+	x:= 1000
+	for i := 0; i < 10000; i++ {
+		tree.Put(i, 100)
 	}
 
-	log.Println(fmt.Sprintf("Inserted %d items in %s", total, time.Since(timer)))
+
+	// tree.Put(1, 100)
+	// tree.Put(2, 100)
+	// tree.Put(3, 100)
+	// tree.Put(4, 100)
+	// tree.Put(5, 100)
+	// tree.Put(6, 100)
+	// // tree.Put(7, 100)
+	// tree.Put(8, 100)
+	// tree.Put(9, 100)
+	// tree.Put(10, 100)
+	log.Println(fmt.Sprintf("Taken taken to push %s data : %s", x, time.Since(timer)))
 }

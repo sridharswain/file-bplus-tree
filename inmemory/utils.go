@@ -12,9 +12,9 @@ func binarySearchPage[TKey cmp.Ordered, TValue any, TTNode TNode[TKey, TValue]](
 		}
 		switch x := any(t1).(type) {
 		case *DataNode[TKey, TValue]:
-			return cmp.Compare(x.Key, t2)
+			return cmp.Compare(x.key, t2)
 		case *IndexNode[TKey]:
-			return cmp.Compare(x.Key, t2)
+			return cmp.Compare(x.key, t2)
 		}
 		return -1
 	})
