@@ -62,23 +62,10 @@ func (dp *DataPage[TKey, TValue]) find(key TKey) (*DataNode[TKey, TValue], bool)
 func (dp *DataPage[TKey, TValue]) findAndUpdateIfExists(key TKey, value TValue) (*DataNode[TKey, TValue], int, bool /*isFound*/) {
 	index, found := binarySearchPage[TKey, TValue](dp.container, key)
 	if found {
-		// TODO update existing data
+		dp.container[index].value = value
 		return dp.container[index], index, true
 	}
 	return nil, index, false
-}
-
-func (dp *DataPage[TKey, TValue]) insert(key TKey, value TValue) bool {
-	index, found := binarySearchPage[TKey, TValue](dp.container, key)
-
-	if !found {
-		// Key is not found
-		dp.insertAt(index, key, value)
-		return true
-	} else {
-		// TODO handle Found and update
-		return true
-	}
 }
 
 func (dp *DataPage[TKey, TValue]) insertAt(index int, key TKey, value TValue) {
@@ -92,12 +79,6 @@ func (dp *DataPage[TKey, TValue]) insertAt(index int, key TKey, value TValue) {
 
 func (dp *DataPage[TKey, TValue]) deleteAt(index int) {
 	dp.container[index] = nil
-	dp.count = dp.count - 1
-}
-
-func (dp *DataPage[TKey, TValue]) delete(index int) {
-	dp.container[index] = nil
-	copy(dp.container[index:], dp.container[index+1:])
 	dp.count = dp.count - 1
 }
 

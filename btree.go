@@ -80,7 +80,7 @@ func (tree *BTree[TKey, TValue]) insertToLeafNode(dataPage *DataPage[TKey, TValu
 	}
 }
 
-func (tree *BTree[TKey, TValue]) splitAndPushIndexPage(indexPage *IndexPage[TKey, TValue]) {
+func (tree *BTree[TKey, TValue]) splitAndPushIndexPage(indexPage *IndexPage[TKey, TValue]) *IndexPage[TKey, TValue] {
 	parent := indexPage.parent
 	newParentKey := indexPage.container[tree.midPoint]
 
@@ -118,9 +118,11 @@ func (tree *BTree[TKey, TValue]) splitAndPushIndexPage(indexPage *IndexPage[TKey
 		parent.insertChildAt(insertedAt+1, newIndexHalf)
 	}
 	newIndexHalf.parent = parent
+
+	return parent
 }
 
-func (tree *BTree[TKey, TValue]) splitAndPushDataPage(key TKey, value TValue, shouldBeAt int, dataPage *DataPage[TKey, TValue]) *IndexPage[TKey, TValue] {
+func (tree *BTree[TKey, TValue]) splitAndPushDataPage(dataPage *DataPage[TKey, TValue]) *IndexPage[TKey, TValue] {
 	newDataPage := dataPage.split(tree)
 
 	var parent *IndexPage[TKey, TValue]
@@ -137,9 +139,6 @@ func (tree *BTree[TKey, TValue]) splitAndPushDataPage(key TKey, value TValue, sh
 		parent = dataPage.parent
 		newLeafIndex, _ := parent.insertSorted(newDataPage.container[0].key) // TODO check how it handles if parent is full
 		parent.insertChildAt(newLeafIndex+1, newDataPage)
-		if parent.isFull(tree) {
-			tree.splitAndPushIndexPage(parent)
-		}
 	}
 
 	// Set parent for the new page
@@ -153,16 +152,25 @@ func (tree *BTree[TKey, TValue]) splitAndPushDataPage(key TKey, value TValue, sh
 	dataPage.next = newDataPage
 	newDataPage.previous = dataPage
 
+	currentParent := parent
+	for currentParent != nil {
+		if currentParent.isFull(tree) {
+			currentParent = tree.splitAndPushIndexPage(currentParent)
+		} else {
+			break
+		}
+	}
+
 	return parent
 }
 
-func (tree *BTree[TKey, TValue]) Put(key TKey, value TValue) bool {
+func (tree *BTree[TKey, TValue]) Put(key TKey, value TValue) {
 	switch rootNode := tree.root.(type) {
 	case *DataPage[TKey, TValue]:
 		shouldBeAt, isUpdated := tree.insertToLeafNode(rootNode, key, value)
 		if !isUpdated {
 			rootNode.insertAt(shouldBeAt, key, value)
-			rootPage := tree.splitAndPushDataPage(key, value, shouldBeAt, rootNode)
+			rootPage := tree.splitAndPushDataPage(rootNode)
 			tree.root = rootPage
 		}
 	case *IndexPage[TKey, TValue]:
@@ -171,18 +179,22 @@ func (tree *BTree[TKey, TValue]) Put(key TKey, value TValue) bool {
 		shouldBeAt, isUpdated := tree.insertToLeafNode(dataPageToInsert, key, value)
 		if !isUpdated {
 			dataPageToInsert.insertAt(shouldBeAt, key, value)
-			tree.splitAndPushDataPage(key, value, shouldBeAt, dataPageToInsert)
+			tree.splitAndPushDataPage(dataPageToInsert)
 		}
-		return true
 	}
-	return true
 }
 
 func (tree *BTree[TKey, TValue]) Get(key TKey) (value *TValue, exists bool) {
-	return
+	dataPage := tree.findDataPageFromIndexRoot(key)
+	dataNodeIndex, found := binarySearchPage[TKey, TValue](dataPage.container, key)
+
+	if found {
+		return &dataPage.container[dataNodeIndex].value, true
+	}
+	return nil, false
 }
 
-func (tree *BTree[TKey, TValue]) Seek(key TKey) (value *TValue, exists bool) {
+func (tree *BTree[TKey, TValue]) Seek(key TKey) (value TValue, exists bool) {
 	return
 }
 

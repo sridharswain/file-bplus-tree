@@ -3,20 +3,21 @@ package main
 import (
 	"fmt"
 	"log"
+	"time"
 	// "slices"
 )
 
 // "slices"
 
 func main() {
-	var tree *BTree[int, int] = New[int, int](3)
+	var tree *BTree[int, int] = New[int, int](1024)
+	timer := time.Now()
 
-	tree.Put(1, 100)
-	tree.Put(2, 99)
-	tree.Put(4, 97)
-	tree.Put(5, 97)
-	tree.Put(3, 98)
-	tree.Put(6, 98)
+	total := 1000000000
+	// log.Println(fmt.Sprintf("%s asdfa %s", 1, 2))
+	for i := 0; i < total; i++ {
+		tree.Put(i, i+1)
+	}
 
-	log.Println(fmt.Sprintf("%s", tree.root))
+	log.Println(fmt.Sprintf("Inserted %d items in %s", total, time.Since(timer)))
 }
