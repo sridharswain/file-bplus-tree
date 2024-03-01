@@ -74,7 +74,6 @@ func (dp *DataPage[TKey, TValue]) insert(key TKey, value TValue) bool {
 	if !found {
 		// Key is not found
 		dp.insertAt(index, key, value)
-		dp.count++
 		return true
 	} else {
 		// TODO handle Found and update
@@ -88,25 +87,25 @@ func (dp *DataPage[TKey, TValue]) insertAt(index int, key TKey, value TValue) {
 		copy(dp.container[index+1:], dp.container[index:])
 	}
 	dp.container[index] = newDataNode(key, value)
-	dp.count++
+	dp.count = dp.count + 1
 }
 
 func (dp *DataPage[TKey, TValue]) deleteAt(index int) {
 	dp.container[index] = nil
-	dp.count--
+	dp.count = dp.count - 1
 }
 
 func (dp *DataPage[TKey, TValue]) delete(index int) {
 	dp.container[index] = nil
 	copy(dp.container[index:], dp.container[index+1:])
-	dp.count--
+	dp.count = dp.count - 1
 }
 
-func (dp *DataPage[TKey, TValue]) split(key TKey, value TValue, shouldBeAt int, tree *BTree[TKey, TValue]) *DataPage[TKey, TValue] {
+func (dp *DataPage[TKey, TValue]) split(tree *BTree[TKey, TValue]) *DataPage[TKey, TValue] {
 	splitDict := newDataPage[TKey, TValue](nil, tree)
 
 	// Create a new data page and copy second half data
-	copy(splitDict.container[0:], dp.container[tree.midPoint:])
+	splitDict.count = copy(splitDict.container[0:], dp.container[tree.midPoint:])
 	for i := tree.midPoint; i < tree.order; i++ {
 		dp.deleteAt(i)
 	}

@@ -13,8 +13,10 @@ func main() {
 
 	tree.Put(1, 100)
 	tree.Put(2, 99)
-	tree.Put(3, 98)
 	tree.Put(4, 97)
+	tree.Put(5, 97)
+	tree.Put(3, 98)
+	tree.Put(6, 98)
 
 	log.Println(fmt.Sprintf("%s", tree.root))
 }

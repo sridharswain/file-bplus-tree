@@ -13,6 +13,7 @@ type IndexPage[TKey cmp.Ordered, TValue any] struct {
 	container      []*IndexNode[TKey]
 	next, previous *IndexPage[TKey, TValue]
 	children       []any
+	parent         *IndexPage[TKey, TValue]
 }
 
 func (ip *IndexPage[TKey, TValue]) find(key TKey) (*DataNode[TKey, TValue], bool) {
@@ -37,9 +38,13 @@ func newIndexPage[TKey cmp.Ordered, TValue any](tree *BTree[TKey, TValue]) *Inde
 
 	return &IndexPage[TKey, TValue]{
 		count:     0,
-		container: make([]*IndexNode[TKey], tree.maxIndexCount),
-		children: make([]any, tree.order + 1),
+		container: make([]*IndexNode[TKey], tree.order),
+		children:  make([]any, tree.order+1),
 	}
+}
+
+func (ip *IndexPage[TKey, TValue]) isFull(tree *BTree[TKey, TValue]) bool {
+	return ip.count == tree.maxIndexCount
 }
 
 func (ip *IndexPage[TKey, TValue]) insertSorted(key TKey) (int, bool) {
@@ -48,7 +53,6 @@ func (ip *IndexPage[TKey, TValue]) insertSorted(key TKey) (int, bool) {
 	if !found {
 		// Key is not found
 		ip.insertAt(index, key)
-		ip.count++
 		return index, true
 	} else {
 		// TODO handle Found and update
@@ -62,6 +66,12 @@ func (ip *IndexPage[TKey, TValue]) insertAt(index int, key TKey) {
 		copy(ip.container[index+1:], ip.container[index:])
 	}
 	ip.container[index] = newIndexNode(key)
+	ip.count++
+}
+
+func (ip *IndexPage[TKey, TValue]) deleteAt(index int) {
+	ip.container[index] = nil
+	ip.count--
 }
 
 func (ip *IndexPage[TKey, TValue]) insertChildAt(index int, child any) {
@@ -70,4 +80,30 @@ func (ip *IndexPage[TKey, TValue]) insertChildAt(index int, child any) {
 		copy(ip.children[index+1:], ip.children[index:])
 	}
 	ip.children[index] = child
+}
+
+func (ip *IndexPage[TKey, TValue]) deleteChildAt(index int) {
+	ip.children[index] = nil
+}
+
+func (ip *IndexPage[TKey, TValue]) split(tree *BTree[TKey, TValue]) *IndexPage[TKey, TValue] {
+	splitDict := newIndexPage[TKey, TValue](tree)
+
+	// Create a new data page and copy second half data
+	splitDict.count = copy(splitDict.container[0:], ip.container[tree.midPoint+1:])
+	for i := tree.midPoint; i < tree.order; i++ {
+		ip.deleteAt(i)
+	}
+
+	return splitDict
+}
+
+func (ip *IndexPage[TKey, TValue]) splitChildrenFrom(newIndexPage *IndexPage[TKey, TValue],
+	tree *BTree[TKey, TValue]) {
+
+	// Create a new data page and copy second half data
+	copy(newIndexPage.children[0:], ip.children[tree.midPoint+1:])
+	for i := tree.midPoint + 1; i < tree.order + 1; i++ {
+		ip.deleteChildAt(i)
+	}
 }
