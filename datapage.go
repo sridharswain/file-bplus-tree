@@ -62,10 +62,24 @@ func (dp *DataPage[TKey, TValue]) find(key TKey) (*DataNode[TKey, TValue], bool)
 func (dp *DataPage[TKey, TValue]) findAndUpdateIfExists(key TKey, value TValue) (*DataNode[TKey, TValue], int, bool /*isFound*/) {
 	index, found := binarySearchPage[TKey, TValue](dp.container, key)
 	if found {
-		dp.container[index].value = value
+		// TODO update existing data
 		return dp.container[index], index, true
 	}
 	return nil, index, false
+}
+
+func (dp *DataPage[TKey, TValue]) insert(key TKey, value TValue) bool {
+	index, found := binarySearchPage[TKey, TValue](dp.container, key)
+
+	if !found {
+		// Key is not found
+		dp.insertAt(index, key, value)
+		dp.count++
+		return true
+	} else {
+		// TODO handle Found and update
+		return true
+	}
 }
 
 func (dp *DataPage[TKey, TValue]) insertAt(index int, key TKey, value TValue) {
@@ -74,19 +88,25 @@ func (dp *DataPage[TKey, TValue]) insertAt(index int, key TKey, value TValue) {
 		copy(dp.container[index+1:], dp.container[index:])
 	}
 	dp.container[index] = newDataNode(key, value)
-	dp.count = dp.count + 1
+	dp.count++
 }
 
 func (dp *DataPage[TKey, TValue]) deleteAt(index int) {
 	dp.container[index] = nil
-	dp.count = dp.count - 1
+	dp.count--
+}
+
+func (dp *DataPage[TKey, TValue]) delete(index int) {
+	dp.container[index] = nil
+	copy(dp.container[index:], dp.container[index+1:])
+	dp.count--
 }
 
 func (dp *DataPage[TKey, TValue]) split(tree *BTree[TKey, TValue]) *DataPage[TKey, TValue] {
 	splitDict := newDataPage[TKey, TValue](nil, tree)
 
 	// Create a new data page and copy second half data
-	splitDict.count = copy(splitDict.container[0:], dp.container[tree.midPoint:])
+	copy(splitDict.container[0:], dp.container[tree.midPoint:])
 	for i := tree.midPoint; i < tree.order; i++ {
 		dp.deleteAt(i)
 	}
