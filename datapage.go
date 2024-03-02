@@ -45,7 +45,7 @@ func newDataPage[TKey cmp.Ordered, TValue any](tree *BTree[TKey, TValue]) *DataP
 		PageType:  DATA_PAGE,
 	}
 
-	SaveDataPage[TKey, TValue](tree.indexName, page, tree.LatestOffset)
+	SaveDataPage[TKey, TValue](tree.IndexName, page, tree.LatestOffset)
 	tree.LatestOffset += PAGE_BLOCK_SIZE
 	return page
 }
@@ -78,7 +78,7 @@ func (dp *DataPage[TKey, TValue]) findAndUpdateIfExists(key TKey, value TValue) 
 	index, found := binarySearchPage[TKey, TValue](dp.Container, key)
 	if found {
 		dp.Container[index].Value = value
-		SaveDataPage[TKey, TValue](dp.tree.indexName, dp, dp.Offset)
+		SaveDataPage[TKey, TValue](dp.tree.IndexName, dp, dp.Offset)
 		return dp.Container[index], index, true
 	}
 	return nil, index, false
@@ -91,7 +91,6 @@ func (dp *DataPage[TKey, TValue]) insertAt(index int, key TKey, value TValue) {
 	}
 	dp.Container[index] = newDataNode(key, value)
 	dp.Count = dp.Count + 1
-	SaveDataPage[TKey, TValue](dp.tree.indexName, dp, dp.Offset)
 }
 
 func (dp *DataPage[TKey, TValue]) deleteAt(index int) {
@@ -107,7 +106,5 @@ func (dp *DataPage[TKey, TValue]) split() *DataPage[TKey, TValue] {
 	for i := dp.tree.MidPoint; i < dp.tree.Order; i++ {
 		dp.deleteAt(i)
 	}
-	SaveDataPage[TKey, TValue](dp.tree.indexName, dp, dp.Offset)
-	SaveDataPage[TKey, TValue](dp.tree.indexName, splitDict, splitDict.Offset)
 	return splitDict
 }

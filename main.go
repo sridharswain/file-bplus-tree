@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	// "math/rand"
 	"strconv"
 	"time"
 )
@@ -12,21 +13,35 @@ func main() {
 
 	timer := time.Now()
 
-	x:= 100000
+	// Write
+	x := 7
 	for i := 0; i < x; i++ {
-		tree.Put(i, 100)
+		internalTime := time.Now()
+		tree.Put(i, i+1)
+		log.Printf("Put %s in %s s", i, time.Since(internalTime))
 	}
 
+	log.Println(fmt.Sprintf("Time taken to write %s data : %s", strconv.Itoa(x), time.Since(timer)))
 
-	// tree.Put(1, 100)
-	// tree.Put(2, 100)
-	// tree.Put(3, 100)
-	// tree.Put(4, 100)
-	// tree.Put(5, 100)
-	// tree.Put(6, 100)
-	// tree.Put(7, 100)
-	// tree.Put(8, 100)
-	// tree.Put(9, 100)
-	// tree.Put(10, 100)
-	log.Println(fmt.Sprintf("Taken taken to push %s data : %s", strconv.Itoa(x), time.Since(timer)))
+	// Read
+	// y := 10000
+	// for i := 0; i < y; i++ {
+	// 	rand := rand.Intn(x)
+	// 	internalTime := time.Now()
+	// 	value, found := tree.Get(rand)
+	// 	if found {
+	// 		log.Printf("Get %s, %s, %s in %s,", rand, found, strconv.Itoa(*value), time.Since(internalTime))
+	// 	} else {
+	// 		log.Printf("Not found, %s", rand)
+	// 	}
+	// }
+
+	// log.Println(fmt.Sprintf("Time taken to read %s data : %s", strconv.Itoa(y), time.Since(timer)))
+
+	// value, found := tree.Get(998600)
+	// if found {
+	// 	log.Println(found, strconv.Itoa(*value))
+	// } else {
+	// 	log.Println("Not found")
+	// }
 }
