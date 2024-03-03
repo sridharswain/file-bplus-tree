@@ -3,12 +3,15 @@ package main
 import (
 	"bytes"
 	"cmp"
-	"encoding/binary"
+	"encoding/gob"
+	"fmt"
+
 	// "encoding/json"
 	"os"
 	"strconv"
 	"sync"
-	"time"
+
+	// "time"
 
 	"github.com/dgraph-io/ristretto"
 )
@@ -49,20 +52,21 @@ func createBufferPool() map[int]*sync.Pool {
 	return pool
 }
 
-func getFromCache(offset int) ([]byte, bool) {
-	data, exists := PAGE_CACHE.Get(strconv.Itoa(offset))
+func getFromCache[TKey cmp.Ordered, TValue any, TTPage PageBlock[TKey, TValue]](offset int) (TTPage, bool) {
+	data, exists := PAGE_CACHE.Get(offset)
 	if !exists {
 		return nil, exists
 	}
-	return data.([]byte), exists
+	return data.(TTPage), exists
 }
 
-func setInCache(offset int, value []byte) {
-	PAGE_CACHE.SetWithTTL(strconv.Itoa(offset), value, int64(len(value)), time.Hour)
+func setInCache[TKey cmp.Ordered, TValue any, TTPage PageBlock[TKey, TValue]](offset int, value TTPage) {
+	// PAGE_CACHE.SetWithTTL(strconv.Itoa(offset), value, int64(len(value)), time.Hour)
+	PAGE_CACHE.Set(offset, value, 1)
 }
 
 func deleteInCache(offset int) {
-	PAGE_CACHE.Del(strconv.Itoa(offset))
+	PAGE_CACHE.Del(offset)
 }
 
 type PageBlockType struct {
@@ -73,47 +77,28 @@ type PageBlock[TKey cmp.Ordered, TValue any] interface {
 	*DataPage[TKey, TValue] | *IndexPage[TKey, TValue] | *BTree[TKey, TValue] | *PageBlockType
 }
 
-// func SaveAt[TKey cmp.Ordered, TValue any, TTPage PageBlock[TKey, TValue]](indexName string, page TTPage, offset int, length int) {
-
-// 	jsonBytes, err := json.Marshal(page)
-
-// 	if err != nil {
-// 		panic(err)
-// 	}
-
-// 	f, err := os.OpenFile(indexName, os.O_WRONLY|os.O_CREATE, os.ModePerm)
-// 	if err != nil {
-// 		panic(err)
-// 	}
-// 	defer f.Close()
-
-// 	var writeBytes []byte = make([]byte, length)
-// 	copy(writeBytes[:len(jsonBytes)], jsonBytes)
-
-// 	if _, err = f.WriteAt(writeBytes, int64(offset)); err != nil {
-// 		panic(err)
-// 	}
-// 	deleteInCache(offset)
-// }
-
-func SaveAt[TKey cmp.Ordered, TValue any, TTPage PageBlock[TKey, TValue]](indexName string, page TTPage, offset int, length int) {
+func SaveAt[TKey cmp.Ordered, TValue any, TTPage PageBlock[TKey, TValue]](tree *BTree[TKey, TValue], page TTPage, offset int, length int) {
 
 	binBytes := new(bytes.Buffer)
-	err := binary.Write(binBytes, binary.BigEndian, page)
+	enc := gob.NewEncoder(binBytes)
+	err := enc.Encode(page)
 
 	if err != nil {
 		panic(err)
 	}
 
-	f, err := os.OpenFile(indexName, os.O_WRONLY|os.O_CREATE, os.ModePerm)
+	f, err := os.OpenFile(tree.IndexName, os.O_WRONLY|os.O_CREATE, os.ModePerm)
 	if err != nil {
 		panic(err)
 	}
 	defer f.Close()
 
 	var writeBytes []byte = make([]byte, length)
-	bytesToWrite := binBytes.Bytes()
-	copy(writeBytes[:len(bytesToWrite)], bytesToWrite)
+	dataBytes := binBytes.Bytes()
+	lengthBytes := []byte(fmt.Sprintf("%s:", strconv.Itoa(len(dataBytes))))
+
+	copy(writeBytes[:len(lengthBytes)], lengthBytes)
+	copy(writeBytes[len(lengthBytes):len(lengthBytes)+len(dataBytes)], dataBytes)
 
 	if _, err = f.WriteAt(writeBytes, int64(offset)); err != nil {
 		panic(err)
@@ -121,101 +106,81 @@ func SaveAt[TKey cmp.Ordered, TValue any, TTPage PageBlock[TKey, TValue]](indexN
 	deleteInCache(offset)
 }
 
-func SaveDataPage[TKey cmp.Ordered, TValue any](indexName string, page *DataPage[TKey, TValue], offset int) {
-	SaveAt[TKey, TValue](indexName, page, offset, PAGE_BLOCK_SIZE)
+func SaveDataPage[TKey cmp.Ordered, TValue any](tree *BTree[TKey, TValue], page *DataPage[TKey, TValue], offset int) {
 	page.Offset = offset
+	SaveAt[TKey, TValue](tree, page, offset, PAGE_BLOCK_SIZE)
 }
 
-func SaveIndexPage[TKey cmp.Ordered, TValue any](indexName string, page *IndexPage[TKey, TValue], offset int) {
-	SaveAt[TKey, TValue](indexName, page, offset, INDEX_BLOCK_SIZE)
+func SaveIndexPage[TKey cmp.Ordered, TValue any](tree *BTree[TKey, TValue], page *IndexPage[TKey, TValue], offset int) {
 	page.Offset = offset
+	SaveAt[TKey, TValue](tree, page, offset, INDEX_BLOCK_SIZE)
 }
 
-func SaveMetadata[TKey cmp.Ordered, TValue any](indexName string, page *BTree[TKey, TValue]) {
-	SaveAt[TKey, TValue](indexName, page, 0, METADATA_SIZE)
+func SaveMetadata[TKey cmp.Ordered, TValue any](tree *BTree[TKey, TValue]) {
+	SaveAt[TKey, TValue](tree, tree, 0, METADATA_SIZE)
 }
 
-// func ReadAt[TKey cmp.Ordered, TValue any, TTPage PageBlock[TKey, TValue]](indexName string, page TTPage, offset int, length int) []byte {
-// 	var datatToUnmarshal []byte
+func ReadAt[TKey cmp.Ordered, TValue any, TTPage PageBlock[TKey, TValue]](indexName string, page TTPage, offset int, length int) TTPage {
 
-// 	datatToUnmarshal, exists := getFromCache(offset)
-// 	if !exists {
-// 		file, err := os.OpenFile(indexName, os.O_RDONLY, os.ModePerm)
+	cached, found := getFromCache[TKey, TValue, TTPage](offset)
 
-// 		if err != nil {
-// 			panic(err)
-// 		}
-// 		defer file.Close()
+	if found {
+		return cached
+	} else {
+		var datatToUnmarshal []byte
+		file, err := os.OpenFile(indexName, os.O_RDONLY, os.ModePerm)
 
-// 		var buffer []byte = BUFFER_POOL[length].Get().([]byte)
-// 		defer BUFFER_POOL[length].Put(buffer)
-// 		_, err = file.ReadAt(buffer, int64(offset))
+		if err != nil {
+			panic(err)
+		}
+		defer file.Close()
 
-// 		if err != nil {
-// 			panic(err)
-// 		}
-// 		jsonBytes := (buffer)[:bytes.IndexByte(buffer, 0)]
-// 		datatToUnmarshal = make([]byte, len(jsonBytes))
-// 		copy(datatToUnmarshal, jsonBytes)
+		var buffer []byte = BUFFER_POOL[length].Get().([]byte)
+		defer BUFFER_POOL[length].Put(buffer)
+		_, err = file.ReadAt(buffer, int64(offset))
 
-// 		setInCache(offset, datatToUnmarshal)
-// 	}
+		if err != nil {
+			panic(err)
+		}
 
-// 	err := json.Unmarshal(datatToUnmarshal, page)
+		lengthBytes := buffer[:bytes.IndexRune(buffer, ':')]
+		dataLength, _ := strconv.Atoi(string(lengthBytes))
 
-// 	if err != nil {
-// 		panic(err)
-// 	}
+		datatToUnmarshal = buffer[len(lengthBytes)+1:len(lengthBytes)+1+dataLength]
+		// copy(datatToUnmarshal, )
 
-// 	return datatToUnmarshal
-// }
+		// setInCache(offset, datatToUnmarshal)
+		dec := gob.NewDecoder(bytes.NewBuffer(datatToUnmarshal))
 
-func ReadAt[TKey cmp.Ordered, TValue any, TTPage PageBlock[TKey, TValue]](indexName string, page TTPage, offset int, length int) []byte {
-	var datatToUnmarshal []byte
+		err = dec.Decode(page)
 
-	file, err := os.OpenFile(indexName, os.O_RDONLY, os.ModePerm)
+		if err != nil {
+			panic(err)
+		}
 
-	if err != nil {
-		panic(err)
+		setInCache[TKey, TValue, TTPage](offset, page)
+
+		return page
 	}
-	defer file.Close()
-
-	var buffer []byte = BUFFER_POOL[length].Get().([]byte)
-	defer BUFFER_POOL[length].Put(buffer)
-	_, err = file.ReadAt(buffer, int64(offset))
-
-	if err != nil {
-		panic(err)
-	}
-
-	binBytes := buffer[:bytes.IndexByte(buffer, 0)]
-	datatToUnmarshal = make([]byte, len(binBytes))
-	copy(datatToUnmarshal, binBytes)
-
-	// setInCache(offset, datatToUnmarshal)
-	err = binary.Read(bytes.NewBuffer(datatToUnmarshal), binary.BigEndian, page)
-
-	// err = json.Unmarshal(datatToUnmarshal, page)
-
-	if err != nil {
-		panic(err)
-	}
-
-	return datatToUnmarshal
 }
 
-func ReadDataPage[TKey cmp.Ordered, TValue any](tree *BTree[TKey, TValue], page *DataPage[TKey, TValue], offset int) {
-	ReadAt[TKey, TValue](tree.IndexName, page, offset, PAGE_BLOCK_SIZE)
+func ReadDataPage[TKey cmp.Ordered, TValue any](tree *BTree[TKey, TValue], offset int) *DataPage[TKey, TValue] {
+	var page DataPage[TKey, TValue]
+	page = *ReadAt[TKey, TValue](tree.IndexName, &page, offset, PAGE_BLOCK_SIZE)
 	page.tree = tree
+	return &page
 }
 
-func ReadIndexPage[TKey cmp.Ordered, TValue any](tree *BTree[TKey, TValue], page *IndexPage[TKey, TValue], offset int) {
-	ReadAt[TKey, TValue](tree.IndexName, page, offset, INDEX_BLOCK_SIZE)
+func ReadIndexPage[TKey cmp.Ordered, TValue any](tree *BTree[TKey, TValue], offset int) *IndexPage[TKey, TValue] {
+	var page IndexPage[TKey, TValue]
+	page = *ReadAt[TKey, TValue](tree.IndexName, &page, offset, INDEX_BLOCK_SIZE)
 	page.tree = tree
+	return &page
 }
 
-func ReadMetadata[TKey cmp.Ordered, TValue any](indexName string, page *BTree[TKey, TValue]) {
-	ReadAt[TKey, TValue](indexName, page, 0, METADATA_SIZE)
+func ReadMetadata[TKey cmp.Ordered, TValue any](indexName string) *BTree[TKey, TValue] {
+	var page BTree[TKey, TValue]
+	return ReadAt[TKey, TValue](indexName, &page, 0, METADATA_SIZE)
 }
 
 func indexFileExists(indexName string) bool {

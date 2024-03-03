@@ -5,13 +5,14 @@ import (
 )
 
 type IndexNode[TKey cmp.Ordered] struct {
-	Key TKey
+	Key    TKey
+	Exists bool
 }
 
 type IndexPage[TKey cmp.Ordered, TValue any] struct {
 	tree               *BTree[TKey, TValue]
 	Count              int
-	Container          []*IndexNode[TKey]
+	Container          []IndexNode[TKey]
 	Next, Previous     int
 	Children           []int
 	IsChildrenDataPage bool
@@ -20,9 +21,10 @@ type IndexPage[TKey cmp.Ordered, TValue any] struct {
 	PageType           string
 }
 
-func newIndexNode[TKey cmp.Ordered](key TKey) *IndexNode[TKey] {
-	return &IndexNode[TKey]{
+func newIndexNode[TKey cmp.Ordered](key TKey) IndexNode[TKey] {
+	return IndexNode[TKey]{
 		Key: key,
+		Exists: true,
 	}
 }
 
@@ -30,7 +32,7 @@ func newIndexPage[TKey cmp.Ordered, TValue any](tree *BTree[TKey, TValue]) *Inde
 	newIndexPage := &IndexPage[TKey, TValue]{
 		tree:               tree,
 		Count:              0,
-		Container:          make([]*IndexNode[TKey], tree.Order),
+		Container:          make([]IndexNode[TKey], tree.Order),
 		Children:           make([]int, tree.Order+1),
 		IsChildrenDataPage: false,
 		PageType:           INDEX_PAGE,
@@ -43,8 +45,9 @@ func newIndexPage[TKey cmp.Ordered, TValue any](tree *BTree[TKey, TValue]) *Inde
 		newIndexPage.Children[i] = -1
 	}
 
-	SaveIndexPage[TKey, TValue](tree.IndexName, newIndexPage, tree.LatestOffset)
+	SaveIndexPage[TKey, TValue](tree, newIndexPage, tree.LatestOffset)
 	tree.LatestOffset += INDEX_BLOCK_SIZE
+	SaveMetadata(tree)
 	return newIndexPage
 }
 
@@ -66,7 +69,7 @@ func (ip *IndexPage[TKey, TValue]) insertSorted(key TKey) (int, bool) {
 }
 
 func (ip *IndexPage[TKey, TValue]) insertAt(index int, key TKey) {
-	if ip.Container[index] != nil {
+	if ip.Container[index].Exists {
 		// if the index is not null means, there is data in the place where the ket should have been.
 		copy(ip.Container[index+1:], ip.Container[index:])
 	}
@@ -75,7 +78,7 @@ func (ip *IndexPage[TKey, TValue]) insertAt(index int, key TKey) {
 }
 
 func (ip *IndexPage[TKey, TValue]) deleteAt(index int) {
-	ip.Container[index] = nil
+	ip.Container[index] = IndexNode[TKey]{}
 	ip.Count--
 }
 

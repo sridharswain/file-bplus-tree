@@ -10,14 +10,15 @@ type BleedDataPage[TKey cmp.Ordered, TValue any] struct {
 }
 
 type DataNode[TKey cmp.Ordered, TValue any] struct {
-	Key   TKey
-	Value TValue
+	Key    TKey
+	Value  TValue
+	Exists bool
 }
 
 type DataPage[TKey cmp.Ordered, TValue any] struct {
 	tree           *BTree[TKey, TValue]
 	Count          int
-	Container      []*DataNode[TKey, TValue]
+	Container      []DataNode[TKey, TValue]
 	Next, Previous int
 	Parent         int
 	PageType       string
@@ -25,10 +26,11 @@ type DataPage[TKey cmp.Ordered, TValue any] struct {
 	bleedPage      int
 }
 
-func newDataNode[TKey cmp.Ordered, TValue any](key TKey, value TValue) *DataNode[TKey, TValue] {
-	return &DataNode[TKey, TValue]{
+func newDataNode[TKey cmp.Ordered, TValue any](key TKey, value TValue) DataNode[TKey, TValue] {
+	return DataNode[TKey, TValue]{
 		Key:   key,
 		Value: value,
+		Exists: true,
 	}
 }
 
@@ -37,7 +39,7 @@ func newDataPage[TKey cmp.Ordered, TValue any](tree *BTree[TKey, TValue]) *DataP
 	page := &DataPage[TKey, TValue]{
 		tree:      tree,
 		Count:     0,
-		Container: make([]*DataNode[TKey, TValue], tree.LeafLength),
+		Container: make([]DataNode[TKey, TValue], tree.LeafLength),
 		Parent:    -1,
 		Next:      -1,
 		Previous:  -1,
@@ -45,8 +47,9 @@ func newDataPage[TKey cmp.Ordered, TValue any](tree *BTree[TKey, TValue]) *DataP
 		PageType:  DATA_PAGE,
 	}
 
-	SaveDataPage[TKey, TValue](tree.IndexName, page, tree.LatestOffset)
+	SaveDataPage[TKey, TValue](tree, page, tree.LatestOffset)
 	tree.LatestOffset += PAGE_BLOCK_SIZE
+	SaveMetadata(tree)
 	return page
 }
 
@@ -69,7 +72,7 @@ func (dp *DataPage[TKey, TValue]) isMergeable(tree *BTree[TKey, TValue]) bool {
 func (dp *DataPage[TKey, TValue]) find(key TKey) (*DataNode[TKey, TValue], bool) {
 	index, found := binarySearchPage[TKey, TValue](dp.Container, key)
 	if found {
-		return dp.Container[index], true
+		return &dp.Container[index], true
 	}
 	return nil, false
 }
@@ -78,14 +81,14 @@ func (dp *DataPage[TKey, TValue]) findAndUpdateIfExists(key TKey, value TValue) 
 	index, found := binarySearchPage[TKey, TValue](dp.Container, key)
 	if found {
 		dp.Container[index].Value = value
-		SaveDataPage[TKey, TValue](dp.tree.IndexName, dp, dp.Offset)
-		return dp.Container[index], index, true
+		SaveDataPage[TKey, TValue](dp.tree, dp, dp.Offset)
+		return &dp.Container[index], index, true
 	}
 	return nil, index, false
 }
 
 func (dp *DataPage[TKey, TValue]) insertAt(index int, key TKey, value TValue) {
-	if dp.Container[index] != nil {
+	if dp.Container[index].Exists {
 		// if the index is not null means, there is data in the place where the ket should have been.
 		copy(dp.Container[index+1:], dp.Container[index:])
 	}
@@ -94,7 +97,7 @@ func (dp *DataPage[TKey, TValue]) insertAt(index int, key TKey, value TValue) {
 }
 
 func (dp *DataPage[TKey, TValue]) deleteAt(index int) {
-	dp.Container[index] = nil
+	dp.Container[index] = DataNode[TKey, TValue]{}
 	dp.Count = dp.Count - 1
 }
 
