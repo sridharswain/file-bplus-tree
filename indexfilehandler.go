@@ -6,13 +6,9 @@ import (
 	"encoding/gob"
 	"fmt"
 
-	// "encoding/json"
 	"os"
 	"strconv"
 	"sync"
-
-	// "time"
-
 	"github.com/dgraph-io/ristretto"
 )
 
@@ -52,15 +48,15 @@ func createBufferPool() map[int]*sync.Pool {
 	return pool
 }
 
-func getFromCache[TKey cmp.Ordered, TValue any, TTPage PageBlock[TKey, TValue]](offset int) (TTPage, bool) {
+func getFromCache[TKey cmp.Ordered, TValue any, TPageBlock PageBlock[TKey, TValue]](offset int) (TPageBlock, bool) {
 	data, exists := PAGE_CACHE.Get(offset)
 	if !exists {
 		return nil, exists
 	}
-	return data.(TTPage), exists
+	return data.(TPageBlock), exists
 }
 
-func setInCache[TKey cmp.Ordered, TValue any, TTPage PageBlock[TKey, TValue]](offset int, value TTPage) {
+func setInCache[TKey cmp.Ordered, TValue any, TPageBlock PageBlock[TKey, TValue]](offset int, value TPageBlock) {
 	// PAGE_CACHE.SetWithTTL(strconv.Itoa(offset), value, int64(len(value)), time.Hour)
 	PAGE_CACHE.Set(offset, value, 1)
 }
@@ -77,7 +73,7 @@ type PageBlock[TKey cmp.Ordered, TValue any] interface {
 	*DataPage[TKey, TValue] | *IndexPage[TKey, TValue] | *BTree[TKey, TValue] | *PageBlockType
 }
 
-func SaveAt[TKey cmp.Ordered, TValue any, TTPage PageBlock[TKey, TValue]](tree *BTree[TKey, TValue], page TTPage, offset int, length int) {
+func SaveAt[TKey cmp.Ordered, TValue any, TPageBlock PageBlock[TKey, TValue]](tree *BTree[TKey, TValue], page TPageBlock, offset int, length int) {
 
 	binBytes := new(bytes.Buffer)
 	enc := gob.NewEncoder(binBytes)
@@ -95,10 +91,10 @@ func SaveAt[TKey cmp.Ordered, TValue any, TTPage PageBlock[TKey, TValue]](tree *
 
 	var writeBytes []byte = make([]byte, length)
 	dataBytes := binBytes.Bytes()
-	lengthBytes := []byte(fmt.Sprintf("%s:", strconv.Itoa(len(dataBytes))))
+	metaBytes := []byte(fmt.Sprintf("%s:", strconv.Itoa(len(dataBytes))))
 
-	copy(writeBytes[:len(lengthBytes)], lengthBytes)
-	copy(writeBytes[len(lengthBytes):len(lengthBytes)+len(dataBytes)], dataBytes)
+	copy(writeBytes[:len(metaBytes)], metaBytes)
+	copy(writeBytes[len(metaBytes):len(metaBytes)+len(dataBytes)], dataBytes)
 
 	if _, err = f.WriteAt(writeBytes, int64(offset)); err != nil {
 		panic(err)
@@ -120,9 +116,9 @@ func SaveMetadata[TKey cmp.Ordered, TValue any](tree *BTree[TKey, TValue]) {
 	SaveAt[TKey, TValue](tree, tree, 0, METADATA_SIZE)
 }
 
-func ReadAt[TKey cmp.Ordered, TValue any, TTPage PageBlock[TKey, TValue]](indexName string, page TTPage, offset int, length int) TTPage {
+func ReadAt[TKey cmp.Ordered, TValue any, TPageBlock PageBlock[TKey, TValue]](indexName string, page TPageBlock, offset int, length int) TPageBlock {
 
-	cached, found := getFromCache[TKey, TValue, TTPage](offset)
+	cached, found := getFromCache[TKey, TValue, TPageBlock](offset)
 
 	if found {
 		return cached
@@ -147,9 +143,7 @@ func ReadAt[TKey cmp.Ordered, TValue any, TTPage PageBlock[TKey, TValue]](indexN
 		dataLength, _ := strconv.Atoi(string(lengthBytes))
 
 		datatToUnmarshal = buffer[len(lengthBytes)+1:len(lengthBytes)+1+dataLength]
-		// copy(datatToUnmarshal, )
 
-		// setInCache(offset, datatToUnmarshal)
 		dec := gob.NewDecoder(bytes.NewBuffer(datatToUnmarshal))
 
 		err = dec.Decode(page)
@@ -158,7 +152,7 @@ func ReadAt[TKey cmp.Ordered, TValue any, TTPage PageBlock[TKey, TValue]](indexN
 			panic(err)
 		}
 
-		setInCache[TKey, TValue, TTPage](offset, page)
+		setInCache[TKey, TValue](offset, page)
 
 		return page
 	}

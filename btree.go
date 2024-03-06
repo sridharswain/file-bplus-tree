@@ -57,7 +57,7 @@ func New[TKey cmp.Ordered, TValue any](indexName string, order int) *BTree[TKey,
 			// TODO update First and last
 		}
 		newTree.LatestOffset += METADATA_SIZE
-		newDataPage[TKey, TValue](newTree)  // Create a lead data page for inital ops
+		newDataPage[TKey, TValue](newTree)  // Create a leaf data page for inital ops
 		return newTree
 	}
 }
