@@ -96,6 +96,10 @@ func (dp *DataPage[TKey, TValue]) insertAt(index int, key TKey, value TValue) {
 	dp.Count = dp.Count + 1
 }
 
+func (dp *DataPage[TKey, TValue]) deleteAtIndexAndSort(index int) {
+	copy(dp.Container[index:], dp.Container[index+1:])
+} 
+
 func (dp *DataPage[TKey, TValue]) deleteAt(index int) {
 	dp.Container[index] = DataNode[TKey, TValue]{}
 	dp.Count = dp.Count - 1

@@ -6,10 +6,10 @@ import (
 	"encoding/gob"
 	"fmt"
 
+	"github.com/dgraph-io/ristretto"
 	"os"
 	"strconv"
 	"sync"
-	"github.com/dgraph-io/ristretto"
 )
 
 const (
@@ -89,12 +89,7 @@ func SaveAt[TKey cmp.Ordered, TValue any, TPageBlock PageBlock[TKey, TValue]](tr
 	}
 	defer f.Close()
 
-	var writeBytes []byte = make([]byte, length)
-	dataBytes := binBytes.Bytes()
-	metaBytes := []byte(fmt.Sprintf("%s:", strconv.Itoa(len(dataBytes))))
-
-	copy(writeBytes[:len(metaBytes)], metaBytes)
-	copy(writeBytes[len(metaBytes):len(metaBytes)+len(dataBytes)], dataBytes)
+	var writeBytes []byte = formatBytesToWrite(binBytes, length)
 
 	if _, err = f.WriteAt(writeBytes, int64(offset)); err != nil {
 		panic(err)
@@ -142,7 +137,7 @@ func ReadAt[TKey cmp.Ordered, TValue any, TPageBlock PageBlock[TKey, TValue]](in
 		lengthBytes := buffer[:bytes.IndexRune(buffer, ':')]
 		dataLength, _ := strconv.Atoi(string(lengthBytes))
 
-		datatToUnmarshal = buffer[len(lengthBytes)+1:len(lengthBytes)+1+dataLength]
+		datatToUnmarshal = buffer[len(lengthBytes)+1 : len(lengthBytes)+1+dataLength]
 
 		dec := gob.NewDecoder(bytes.NewBuffer(datatToUnmarshal))
 
@@ -183,4 +178,15 @@ func indexFileExists(indexName string) bool {
 	}
 
 	return false
+}
+
+func formatBytesToWrite(binBuffer *bytes.Buffer, length int) []byte {
+	var writeBytes []byte = make([]byte, length)
+	dataBytes := binBuffer.Bytes()
+	metaBytes := []byte(fmt.Sprintf("%s:", strconv.Itoa(len(dataBytes))))
+
+	copy(writeBytes[:len(metaBytes)], metaBytes)
+	copy(writeBytes[len(metaBytes):len(metaBytes)+len(dataBytes)], dataBytes)
+
+	return writeBytes
 }

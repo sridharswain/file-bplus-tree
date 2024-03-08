@@ -57,7 +57,7 @@ func New[TKey cmp.Ordered, TValue any](indexName string, order int) *BTree[TKey,
 			// TODO update First and last
 		}
 		newTree.LatestOffset += METADATA_SIZE
-		newDataPage[TKey, TValue](newTree)  // Create a leaf data page for inital ops
+		newDataPage[TKey, TValue](newTree) // Create a leaf data page for inital ops
 		return newTree
 	}
 }
@@ -174,7 +174,7 @@ func (tree *BTree[TKey, TValue]) splitAndPushDataPage(dataPage *DataPage[TKey, T
 		newLeafIndex, _ := parent.insertSorted(newDataPage.Container[0].Key) // TODO check how it handles if parent is full
 		parent.insertChildAt(newLeafIndex+1, newDataPage.Offset)
 	}
-	SaveIndexPage[TKey, TValue](tree, parent, parent.Offset)
+	SaveIndexPage(tree, parent, parent.Offset)
 
 	// Set parent for the new page
 	newDataPage.Parent = parent.Offset
@@ -183,13 +183,13 @@ func (tree *BTree[TKey, TValue]) splitAndPushDataPage(dataPage *DataPage[TKey, T
 	if newDataPage.Next != -1 {
 		nextDataPage := ReadDataPage[TKey, TValue](tree, newDataPage.Next)
 		nextDataPage.Previous = dataPage.Offset
-		SaveDataPage[TKey, TValue](tree, nextDataPage, nextDataPage.Offset)
+		SaveDataPage(tree, nextDataPage, nextDataPage.Offset)
 	}
 
 	dataPage.Next = newDataPage.Offset
 	newDataPage.Previous = dataPage.Offset
-	SaveDataPage[TKey, TValue](tree, dataPage, dataPage.Offset)
-	SaveDataPage[TKey, TValue](tree, newDataPage, newDataPage.Offset)
+	SaveDataPage(tree, dataPage, dataPage.Offset)
+	SaveDataPage(tree, newDataPage, newDataPage.Offset)
 
 	currentParent := parent
 	for currentParent != nil {
@@ -201,6 +201,26 @@ func (tree *BTree[TKey, TValue]) splitAndPushDataPage(dataPage *DataPage[TKey, T
 	}
 
 	return parent
+}
+
+func (tree *BTree[TKey, TValue]) handleLeafDeficiency(dataPage *DataPage[TKey, TValue]) {
+	if dataPage.Parent == -1 {
+		// handle Root Node
+		return
+	}
+
+	if !dataPage.isDeficient(tree) {
+		return
+	}
+
+	if dataPage.Previous != -1 {
+		leftDataPage := ReadDataPage(tree, dataPage.Previous)
+		borrowIndex := leftDataPage.Count - 1
+		dataPage.insertAt()
+		leftDataPage.deleteAt()
+		dataPage.ins
+	}
+
 }
 
 func (tree *BTree[TKey, TValue]) Put(key TKey, value TValue) {
@@ -235,10 +255,16 @@ func (tree *BTree[TKey, TValue]) Get(key TKey) (*TValue, bool) {
 	return nil, false
 }
 
-func (tree *BTree[TKey, TValue]) Seek(key TKey) (value TValue, exists bool) {
-	return
-}
+func (tree *BTree[TKey, TValue]) Delete(key TKey) (ok bool) {
+	dataPage := tree.findDataPageFromIndexRoot(key)
+	dataNodeIndex, found := binarySearchPage[TKey, TValue](dataPage.Container, key)
+	if !found {
+		return false
+	}
 
-func (tree *BTree[TKey, TValue]) Delete() (ok bool) {
-	return
+	dataPage.deleteAtIndexAndSort(dataNodeIndex)
+	if dataPage.Parent != -1 { // Check if the page is not root
+		tree.handleLeafDeficiency(dataPage)
+	}
+	return true
 }
