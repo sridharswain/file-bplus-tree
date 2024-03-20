@@ -209,16 +209,18 @@ func (tree *BTree[TKey, TValue]) handleLeafDeficiency(dataPage *DataPage[TKey, T
 		return
 	}
 
-	if !dataPage.isDeficient(tree) {
+	if !dataPage.isDeficient() {
 		return
 	}
 
 	if dataPage.Previous != -1 {
 		leftDataPage := ReadDataPage(tree, dataPage.Previous)
-		borrowIndex := leftDataPage.Count - 1
-		dataPage.insertAt()
-		leftDataPage.deleteAt()
-		dataPage.ins
+		if leftDataPage.isLendable() {
+			borrowIndex := leftDataPage.Count - 1
+			dataPage.insertAt()
+			leftDataPage.deleteAt(borrowIndex)
+			dataPage.ins
+		}
 	}
 
 }
