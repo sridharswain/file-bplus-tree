@@ -35,6 +35,10 @@ type BTree[TKey cmp.Ordered, TValue any] struct {
 	LatestOffset int
 }
 
+func (tree *BTree[TKey, TValue]) IsEmpty() bool {
+	return tree.Count == 0
+}
+
 func New[TKey cmp.Ordered, TValue any](indexName string, order int) *BTree[TKey, TValue] {
 
 	if indexFileExists(indexName) {
@@ -57,7 +61,7 @@ func New[TKey cmp.Ordered, TValue any](indexName string, order int) *BTree[TKey,
 			// TODO update First and last
 		}
 		newTree.LatestOffset += METADATA_SIZE
-		newDataPage[TKey, TValue](newTree) // Create a leaf data page for inital ops
+		newDataPage(newTree) // Create a leaf data page for inital ops
 		return newTree
 	}
 }
@@ -72,13 +76,23 @@ func (tree *BTree[TKey, TValue]) findDataPageFromIndexRoot(key TKey) *DataPage[T
 
 	for {
 		currentIndexPage := ReadIndexPage(tree, currentPageOffset)
-		index, _ := binarySearchPage[TKey, TValue](currentIndexPage.Container, key)
+		index, found := binarySearchPage[TKey, TValue](currentIndexPage.Container, key)
 
 		if currentIndexPage.IsChildrenDataPage {
-			dataPage := ReadDataPage(tree, currentIndexPage.Children[index])
-			return dataPage
+			if found {
+				dataPage := ReadDataPage(tree, currentIndexPage.Children[index+1])
+				return dataPage
+			} else {
+				dataPage := ReadDataPage(tree, currentIndexPage.Children[index])
+				return dataPage
+			}
 		} else {
-			currentPageOffset = currentIndexPage.Children[index]
+			// currentPageOffset = currentIndexPage.Children[index]
+			if found {
+				currentPageOffset = currentIndexPage.Children[index+1]
+			} else {
+				currentPageOffset = currentIndexPage.Children[index]
+			}
 		}
 	}
 }
@@ -181,7 +195,7 @@ func (tree *BTree[TKey, TValue]) splitAndPushDataPage(dataPage *DataPage[TKey, T
 
 	newDataPage.Next = dataPage.Next
 	if newDataPage.Next != -1 {
-		nextDataPage := ReadDataPage[TKey, TValue](tree, newDataPage.Next)
+		nextDataPage := ReadDataPage(tree, newDataPage.Next)
 		nextDataPage.Previous = dataPage.Offset
 		SaveDataPage(tree, nextDataPage, nextDataPage.Offset)
 	}
@@ -203,9 +217,30 @@ func (tree *BTree[TKey, TValue]) splitAndPushDataPage(dataPage *DataPage[TKey, T
 	return parent
 }
 
-func (tree *BTree[TKey, TValue]) handleLeafDeficiency(dataPage *DataPage[TKey, TValue]) {
+func (tree *BTree[TKey, TValue]) readRelationsOfLeafPage(dataPage *DataPage[TKey, TValue]) (
+	*IndexPage[TKey, TValue], *DataPage[TKey, TValue], *DataPage[TKey, TValue]) {
+	var parentIndexPage *IndexPage[TKey, TValue] = ReadIndexPage((*BTree[TKey, TValue])(tree), dataPage.Parent)
+	var leftDataPage *DataPage[TKey, TValue] = nil
+	var rightDataPage *DataPage[TKey, TValue] = nil
+
+	if dataPage.Previous != -1 {
+		leftDataPage = ReadDataPage(tree, dataPage.Previous)
+	}
+
+	if dataPage.Next != -1 {
+		rightDataPage = ReadDataPage(tree, dataPage.Next)
+	}
+
+	return parentIndexPage, leftDataPage, rightDataPage
+}
+
+func (tree *BTree[TKey, TValue]) handleIndexDeficiency(indexPage *IndexPage[TKey, TValue], key TKey) {
+
+}
+
+func (tree *BTree[TKey, TValue]) handleLeafDeficiency(dataPage *DataPage[TKey, TValue], key TKey) {
 	if dataPage.Parent == -1 {
-		// handle Root Node
+		SaveDataPage(tree, dataPage, dataPage.Offset)
 		return
 	}
 
@@ -213,14 +248,62 @@ func (tree *BTree[TKey, TValue]) handleLeafDeficiency(dataPage *DataPage[TKey, T
 		return
 	}
 
-	if dataPage.Previous != -1 {
-		leftDataPage := ReadDataPage(tree, dataPage.Previous)
-		if leftDataPage.isLendable() {
-			borrowIndex := leftDataPage.Count - 1
-			dataPage.insertAt()
-			leftDataPage.deleteAt(borrowIndex)
-			dataPage.ins
+	parentIndexPage, leftDataPage, rightDataPage := tree.readRelationsOfLeafPage(dataPage)
+
+	if leftDataPage != nil && leftDataPage.Parent == dataPage.Parent && leftDataPage.isLendable() {
+		borrowIndex := leftDataPage.Count - 1
+		borrowNode := leftDataPage.Container[borrowIndex]
+		dataPage.insertAt(0, borrowNode.Key, borrowNode.Value)
+		leftDataPage.deleteAt(borrowIndex) // Works as the last element has to be removed.
+
+		pointerIndex, _ := binarySearchPage[TKey, TValue](parentIndexPage.Container, key)
+		if borrowNode.Key < parentIndexPage.Container[pointerIndex-1].Key {
+			parentIndexPage.Container[pointerIndex-1].Key = borrowNode.Key
 		}
+		SaveDataPage(tree, dataPage, dataPage.Offset)
+		SaveDataPage(tree, leftDataPage, leftDataPage.Offset)
+		SaveIndexPage(tree, parentIndexPage, parentIndexPage.Offset)
+	} else if rightDataPage != nil && rightDataPage.Parent == dataPage.Parent && rightDataPage.isLendable() {
+		borrowIndex := 0
+		borrowNode := rightDataPage.Container[borrowIndex]
+		dataPage.insertAt(dataPage.Count-1, borrowNode.Key, borrowNode.Value)
+		rightDataPage.deleteAtIndexAndSort(borrowIndex) // need to sort as first element is being removed.
+
+		pointerIndex, _ := binarySearchPage[TKey, TValue](parentIndexPage.Container, key)
+		if borrowNode.Key >= parentIndexPage.Container[pointerIndex].Key {
+			parentIndexPage.Container[pointerIndex].Key = rightDataPage.Container[0].Key
+		}
+		SaveDataPage(tree, dataPage, dataPage.Offset)
+		SaveDataPage(tree, rightDataPage, rightDataPage.Offset)
+		SaveIndexPage(tree, parentIndexPage, parentIndexPage.Offset)
+	} else if leftDataPage != nil && leftDataPage.Parent == dataPage.Parent && leftDataPage.isMergeable() {
+		pointerIndex, found := binarySearchPage[TKey, TValue](parentIndexPage.Container, key)
+		if found {
+			parentIndexPage.deleteAtAndSort(pointerIndex)
+		}
+		parentIndexPage.deleteChildAt(pointerIndex)
+		
+		leftDataPage.Next = dataPage.Next
+		if parentIndexPage.isDeficient() {
+			tree.handleIndexDeficiency(parentIndexPage, key)
+		}
+		SaveDataPage(tree, dataPage, dataPage.Offset)
+		SaveDataPage(tree, leftDataPage, leftDataPage.Offset)
+		SaveIndexPage(tree, parentIndexPage, parentIndexPage.Offset)
+	} else if rightDataPage != nil && rightDataPage.Parent == dataPage.Parent && rightDataPage.isMergeable() {
+		pointerIndex, found := binarySearchPage[TKey, TValue](parentIndexPage.Container, key)
+		if found {
+			parentIndexPage.deleteAtAndSort(pointerIndex)
+		}
+		parentIndexPage.deleteChildAt(pointerIndex)
+		rightDataPage.Previous = dataPage.Previous
+		// TODO handle first leaf node
+		if parentIndexPage.isDeficient() {
+			tree.handleIndexDeficiency(parentIndexPage, key)
+		}
+		SaveDataPage(tree, dataPage, dataPage.Offset)
+		SaveDataPage(tree, rightDataPage, rightDataPage.Offset)
+		SaveIndexPage(tree, parentIndexPage, parentIndexPage.Offset)
 	}
 
 }
@@ -258,6 +341,8 @@ func (tree *BTree[TKey, TValue]) Get(key TKey) (*TValue, bool) {
 }
 
 func (tree *BTree[TKey, TValue]) Delete(key TKey) (ok bool) {
+	// TODO handle if tree is empty
+
 	dataPage := tree.findDataPageFromIndexRoot(key)
 	dataNodeIndex, found := binarySearchPage[TKey, TValue](dataPage.Container, key)
 	if !found {
@@ -265,8 +350,6 @@ func (tree *BTree[TKey, TValue]) Delete(key TKey) (ok bool) {
 	}
 
 	dataPage.deleteAtIndexAndSort(dataNodeIndex)
-	if dataPage.Parent != -1 { // Check if the page is not root
-		tree.handleLeafDeficiency(dataPage)
-	}
+	tree.handleLeafDeficiency(dataPage, key)
 	return true
 }

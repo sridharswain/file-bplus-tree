@@ -56,6 +56,7 @@ func (tree *BTree[TKey, TValue]) findDataPageFromIndexRoot(key TKey) *DataPage[T
 		switch indexPage := currentPage.(type) {
 		case *IndexPage[TKey, TValue]:
 			index, _ := binarySearchPage[TKey, TValue](indexPage.container, key)
+			
 			currentPage = indexPage.children[index]
 			continue
 		case *DataPage[TKey, TValue]:

@@ -21,6 +21,10 @@ type IndexPage[TKey cmp.Ordered, TValue any] struct {
 	PageType           string
 }
 
+func (ip *IndexPage[TKey, TValue]) isDeficient() bool {
+	return ip.Count < ip.tree.MinIndexCount
+}
+
 func newIndexNode[TKey cmp.Ordered](key TKey) IndexNode[TKey] {
 	return IndexNode[TKey]{
 		Key: key,
@@ -114,4 +118,9 @@ func (ip *IndexPage[TKey, TValue]) splitChildrenFrom(newIndexPage *IndexPage[TKe
 	for i := tree.MidPoint + 1; i < tree.Order+1; i++ {
 		ip.deleteChildAt(i)
 	}
+}
+
+func (ip *IndexPage[TKey, TValue]) deleteAtAndSort(index int) {
+	copy(ip.Container[index:], ip.Container[index+1:])
+	ip.Count--
 }
