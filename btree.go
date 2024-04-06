@@ -108,7 +108,7 @@ func (tree *BTree[TKey, TValue]) insertToLeafNode(dataPage *DataPage[TKey, TValu
 			return shouldBeAt, true
 		} else {
 			dataPage.insertAt(shouldBeAt, key, value)
-			SaveDataPage[TKey, TValue](tree, dataPage, dataPage.Offset)
+			SaveDataPage(tree, dataPage, dataPage.Offset)
 			return shouldBeAt, false
 		}
 	}
@@ -148,7 +148,7 @@ func (tree *BTree[TKey, TValue]) splitAndPushIndexPage(indexPage *IndexPage[TKey
 
 	var parentIndexPage *IndexPage[TKey, TValue]
 	if parentOffset == -1 {
-		parentIndexPage = newIndexPage[TKey](tree)
+		parentIndexPage = newIndexPage(tree)
 		parentIndexPage.insertAt(0, newParentKey.Key)
 		parentIndexPage.insertChildAt(0, indexPage.Offset)
 		parentIndexPage.insertChildAt(1, newIndexHalf.Offset)
