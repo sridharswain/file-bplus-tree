@@ -28,8 +28,8 @@ type DataPage[TKey cmp.Ordered, TValue any] struct {
 
 func newDataNode[TKey cmp.Ordered, TValue any](key TKey, value TValue) DataNode[TKey, TValue] {
 	return DataNode[TKey, TValue]{
-		Key:   key,
-		Value: value,
+		Key:    key,
+		Value:  value,
 		Exists: true,
 	}
 }
@@ -53,20 +53,20 @@ func newDataPage[TKey cmp.Ordered, TValue any](tree *BTree[TKey, TValue]) *DataP
 	return page
 }
 
-func (dp *DataPage[TKey, TValue]) isDeficient(tree *BTree[TKey, TValue]) bool {
-	return dp.Count < tree.MinLeafCount
+func (dp *DataPage[TKey, TValue]) isDeficient() bool {
+	return dp.Count < dp.tree.MinLeafCount
 }
 
-func (dp *DataPage[TKey, TValue]) isFull() bool {
+func (dp *DataPage[TKey, TValue]) isOverflowing() bool {
 	return dp.Count == dp.tree.MaxLeafCount
 }
 
-func (dp *DataPage[TKey, TValue]) isLendable(tree *BTree[TKey, TValue]) bool {
-	return dp.Count > tree.MinLeafCount
+func (dp *DataPage[TKey, TValue]) isLendable() bool {
+	return dp.Count > dp.tree.MinLeafCount
 }
 
-func (dp *DataPage[TKey, TValue]) isMergeable(tree *BTree[TKey, TValue]) bool {
-	return dp.Count == tree.MinLeafCount
+func (dp *DataPage[TKey, TValue]) isMergeable() bool {
+	return dp.Count == dp.tree.MinLeafCount
 }
 
 func (dp *DataPage[TKey, TValue]) find(key TKey) (*DataNode[TKey, TValue], bool) {
@@ -93,12 +93,17 @@ func (dp *DataPage[TKey, TValue]) insertAt(index int, key TKey, value TValue) {
 		copy(dp.Container[index+1:], dp.Container[index:])
 	}
 	dp.Container[index] = newDataNode(key, value)
-	dp.Count = dp.Count + 1
+	dp.Count++
+}
+
+func (dp *DataPage[TKey, TValue]) deleteAtIndexAndSort(index int) {
+	copy(dp.Container[index:], dp.Container[index+1:])
+	dp.Count--
 }
 
 func (dp *DataPage[TKey, TValue]) deleteAt(index int) {
 	dp.Container[index] = DataNode[TKey, TValue]{}
-	dp.Count = dp.Count - 1
+	dp.Count--
 }
 
 func (dp *DataPage[TKey, TValue]) split() *DataPage[TKey, TValue] {

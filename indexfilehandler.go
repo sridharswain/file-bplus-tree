@@ -6,10 +6,10 @@ import (
 	"encoding/gob"
 	"fmt"
 
+	"github.com/dgraph-io/ristretto"
 	"os"
 	"strconv"
 	"sync"
-	"github.com/dgraph-io/ristretto"
 )
 
 const (
@@ -70,7 +70,7 @@ type PageBlockType struct {
 }
 
 type PageBlock[TKey cmp.Ordered, TValue any] interface {
-	*DataPage[TKey, TValue] | *IndexPage[TKey, TValue] | *BTree[TKey, TValue] | *PageBlockType
+	*DataPage[TKey, TValue] | *IndexPage[TKey, TValue] | *BTree[TKey, TValue]
 }
 
 func SaveAt[TKey cmp.Ordered, TValue any, TPageBlock PageBlock[TKey, TValue]](tree *BTree[TKey, TValue], page TPageBlock, offset int, length int) {
@@ -89,12 +89,7 @@ func SaveAt[TKey cmp.Ordered, TValue any, TPageBlock PageBlock[TKey, TValue]](tr
 	}
 	defer f.Close()
 
-	var writeBytes []byte = make([]byte, length)
-	dataBytes := binBytes.Bytes()
-	metaBytes := []byte(fmt.Sprintf("%s:", strconv.Itoa(len(dataBytes))))
-
-	copy(writeBytes[:len(metaBytes)], metaBytes)
-	copy(writeBytes[len(metaBytes):len(metaBytes)+len(dataBytes)], dataBytes)
+	var writeBytes []byte = formatBytesToWrite(binBytes, length)
 
 	if _, err = f.WriteAt(writeBytes, int64(offset)); err != nil {
 		panic(err)
@@ -104,16 +99,16 @@ func SaveAt[TKey cmp.Ordered, TValue any, TPageBlock PageBlock[TKey, TValue]](tr
 
 func SaveDataPage[TKey cmp.Ordered, TValue any](tree *BTree[TKey, TValue], page *DataPage[TKey, TValue], offset int) {
 	page.Offset = offset
-	SaveAt[TKey, TValue](tree, page, offset, PAGE_BLOCK_SIZE)
+	SaveAt(tree, page, offset, PAGE_BLOCK_SIZE)
 }
 
 func SaveIndexPage[TKey cmp.Ordered, TValue any](tree *BTree[TKey, TValue], page *IndexPage[TKey, TValue], offset int) {
 	page.Offset = offset
-	SaveAt[TKey, TValue](tree, page, offset, INDEX_BLOCK_SIZE)
+	SaveAt(tree, page, offset, INDEX_BLOCK_SIZE)
 }
 
 func SaveMetadata[TKey cmp.Ordered, TValue any](tree *BTree[TKey, TValue]) {
-	SaveAt[TKey, TValue](tree, tree, 0, METADATA_SIZE)
+	SaveAt(tree, tree, 0, METADATA_SIZE)
 }
 
 func ReadAt[TKey cmp.Ordered, TValue any, TPageBlock PageBlock[TKey, TValue]](indexName string, page TPageBlock, offset int, length int) TPageBlock {
@@ -142,7 +137,7 @@ func ReadAt[TKey cmp.Ordered, TValue any, TPageBlock PageBlock[TKey, TValue]](in
 		lengthBytes := buffer[:bytes.IndexRune(buffer, ':')]
 		dataLength, _ := strconv.Atoi(string(lengthBytes))
 
-		datatToUnmarshal = buffer[len(lengthBytes)+1:len(lengthBytes)+1+dataLength]
+		datatToUnmarshal = buffer[len(lengthBytes)+1 : len(lengthBytes)+1+dataLength]
 
 		dec := gob.NewDecoder(bytes.NewBuffer(datatToUnmarshal))
 
@@ -183,4 +178,15 @@ func indexFileExists(indexName string) bool {
 	}
 
 	return false
+}
+
+func formatBytesToWrite(binBuffer *bytes.Buffer, length int) []byte {
+	var writeBytes []byte = make([]byte, length)
+	dataBytes := binBuffer.Bytes()
+	metaBytes := []byte(fmt.Sprintf("%s:", strconv.Itoa(len(dataBytes))))
+
+	copy(writeBytes[:len(metaBytes)], metaBytes)
+	copy(writeBytes[len(metaBytes):len(metaBytes)+len(dataBytes)], dataBytes)
+
+	return writeBytes
 }
