@@ -2,6 +2,7 @@ package main
 
 import (
 	"cmp"
+	"log"
 	"math"
 )
 
@@ -15,8 +16,9 @@ type TNode[TKey cmp.Ordered, TValue any] interface {
 
 type BTree[TKey cmp.Ordered, TValue any] struct {
 	IndexName string
-	Count     int
-	Order     int
+
+	Count int
+	Order int
 
 	LeafLength   int
 	MinLeafCount int
@@ -31,8 +33,8 @@ type BTree[TKey cmp.Ordered, TValue any] struct {
 
 	First, Last int
 
-	IsLeaf       bool
 	LatestOffset int
+	IsLeaf       bool
 }
 
 func (tree *BTree[TKey, TValue]) IsEmpty() bool {
@@ -56,7 +58,7 @@ func New[TKey cmp.Ordered, TValue any](indexName string, order int) *BTree[TKey,
 			MinLeafCount: int(math.Ceil(float64(order)/2.0) - 1),
 
 			MaxIndexCount: order,
-			MinIndexCount: int(math.Ceil(float64(order) / 2.0)),
+			MinIndexCount: int(math.Ceil(float64(order)/2.0) - 1),
 			IsLeaf:        true,
 			// TODO update First and last
 		}
@@ -97,14 +99,14 @@ func (tree *BTree[TKey, TValue]) findDataPageFromIndexRoot(key TKey) *DataPage[T
 	}
 }
 
-func (tree *BTree[TKey, TValue]) insertToLeafNode(dataPage *DataPage[TKey, TValue], key TKey, value TValue) (int, bool /*isFull*/) {
+func (tree *BTree[TKey, TValue]) insertToLeafNode(dataPage *DataPage[TKey, TValue], key TKey, value TValue) (int, bool /*isOverflowing*/) {
 	_, shouldBeAt, alreadyExists := dataPage.findAndUpdateIfExists(key, value)
 
 	if alreadyExists {
 		// TODO Handle Updated
 		return shouldBeAt, false
 	} else {
-		if dataPage.isFull() {
+		if dataPage.isOverflowing() {
 			return shouldBeAt, true
 		} else {
 			dataPage.insertAt(shouldBeAt, key, value)
@@ -196,7 +198,7 @@ func (tree *BTree[TKey, TValue]) splitAndPushDataPage(dataPage *DataPage[TKey, T
 	newDataPage.Next = dataPage.Next
 	if newDataPage.Next != -1 {
 		nextDataPage := ReadDataPage(tree, newDataPage.Next)
-		nextDataPage.Previous = dataPage.Offset
+		nextDataPage.Previous = newDataPage.Offset
 		SaveDataPage(tree, nextDataPage, nextDataPage.Offset)
 	}
 
@@ -207,7 +209,7 @@ func (tree *BTree[TKey, TValue]) splitAndPushDataPage(dataPage *DataPage[TKey, T
 
 	currentParent := parent
 	for currentParent != nil {
-		if currentParent.isFull() {
+		if currentParent.isOverflowing() {
 			currentParent = tree.splitAndPushIndexPage(currentParent)
 		} else {
 			break
@@ -215,6 +217,34 @@ func (tree *BTree[TKey, TValue]) splitAndPushDataPage(dataPage *DataPage[TKey, T
 	}
 
 	return parent
+}
+
+func (tree *BTree[TKey, TValue]) readRelationsOfIndexPage(indexPage *IndexPage[TKey, TValue]) (
+	*IndexPage[TKey, TValue], *IndexPage[TKey, TValue], *IndexPage[TKey, TValue]) {
+	if indexPage.Parent == -1 {
+		// Root node has no parent.
+		return nil, nil, nil
+	}
+
+	var parentIndexPage = ReadIndexPage(tree, indexPage.Parent)
+	var leftIndexPage *IndexPage[TKey, TValue] = nil
+	var rightIndexPage *IndexPage[TKey, TValue] = nil
+
+	if indexPage.Previous != -1 {
+		leftIndexPage = ReadIndexPage(tree, indexPage.Previous)
+		if leftIndexPage.Parent != indexPage.Parent {
+			leftIndexPage = nil
+		}
+	}
+
+	if indexPage.Next != -1 {
+		rightIndexPage = ReadIndexPage(tree, indexPage.Next)
+		if rightIndexPage.Parent != indexPage.Parent {
+			rightIndexPage = nil
+		}
+	}
+
+	return parentIndexPage, leftIndexPage, rightIndexPage
 }
 
 func (tree *BTree[TKey, TValue]) readRelationsOfLeafPage(dataPage *DataPage[TKey, TValue]) (
@@ -225,87 +255,19 @@ func (tree *BTree[TKey, TValue]) readRelationsOfLeafPage(dataPage *DataPage[TKey
 
 	if dataPage.Previous != -1 {
 		leftDataPage = ReadDataPage(tree, dataPage.Previous)
+		if leftDataPage.Parent != dataPage.Parent {
+			leftDataPage = nil
+		}
 	}
 
 	if dataPage.Next != -1 {
 		rightDataPage = ReadDataPage(tree, dataPage.Next)
+		if rightDataPage.Parent != dataPage.Parent {
+			rightDataPage = nil
+		}
 	}
 
 	return parentIndexPage, leftDataPage, rightDataPage
-}
-
-func (tree *BTree[TKey, TValue]) handleIndexDeficiency(indexPage *IndexPage[TKey, TValue], key TKey) {
-
-}
-
-func (tree *BTree[TKey, TValue]) handleLeafDeficiency(dataPage *DataPage[TKey, TValue], key TKey) {
-	if dataPage.Parent == -1 {
-		SaveDataPage(tree, dataPage, dataPage.Offset)
-		return
-	}
-
-	if !dataPage.isDeficient() {
-		return
-	}
-
-	parentIndexPage, leftDataPage, rightDataPage := tree.readRelationsOfLeafPage(dataPage)
-
-	if leftDataPage != nil && leftDataPage.Parent == dataPage.Parent && leftDataPage.isLendable() {
-		borrowIndex := leftDataPage.Count - 1
-		borrowNode := leftDataPage.Container[borrowIndex]
-		dataPage.insertAt(0, borrowNode.Key, borrowNode.Value)
-		leftDataPage.deleteAt(borrowIndex) // Works as the last element has to be removed.
-
-		pointerIndex, _ := binarySearchPage[TKey, TValue](parentIndexPage.Container, key)
-		if borrowNode.Key < parentIndexPage.Container[pointerIndex-1].Key {
-			parentIndexPage.Container[pointerIndex-1].Key = borrowNode.Key
-		}
-		SaveDataPage(tree, dataPage, dataPage.Offset)
-		SaveDataPage(tree, leftDataPage, leftDataPage.Offset)
-		SaveIndexPage(tree, parentIndexPage, parentIndexPage.Offset)
-	} else if rightDataPage != nil && rightDataPage.Parent == dataPage.Parent && rightDataPage.isLendable() {
-		borrowIndex := 0
-		borrowNode := rightDataPage.Container[borrowIndex]
-		dataPage.insertAt(dataPage.Count-1, borrowNode.Key, borrowNode.Value)
-		rightDataPage.deleteAtIndexAndSort(borrowIndex) // need to sort as first element is being removed.
-
-		pointerIndex, _ := binarySearchPage[TKey, TValue](parentIndexPage.Container, key)
-		if borrowNode.Key >= parentIndexPage.Container[pointerIndex].Key {
-			parentIndexPage.Container[pointerIndex].Key = rightDataPage.Container[0].Key
-		}
-		SaveDataPage(tree, dataPage, dataPage.Offset)
-		SaveDataPage(tree, rightDataPage, rightDataPage.Offset)
-		SaveIndexPage(tree, parentIndexPage, parentIndexPage.Offset)
-	} else if leftDataPage != nil && leftDataPage.Parent == dataPage.Parent && leftDataPage.isMergeable() {
-		pointerIndex, found := binarySearchPage[TKey, TValue](parentIndexPage.Container, key)
-		if found {
-			parentIndexPage.deleteAtAndSort(pointerIndex)
-		}
-		parentIndexPage.deleteChildAt(pointerIndex)
-		
-		leftDataPage.Next = dataPage.Next
-		if parentIndexPage.isDeficient() {
-			tree.handleIndexDeficiency(parentIndexPage, key)
-		}
-		SaveDataPage(tree, dataPage, dataPage.Offset)
-		SaveDataPage(tree, leftDataPage, leftDataPage.Offset)
-		SaveIndexPage(tree, parentIndexPage, parentIndexPage.Offset)
-	} else if rightDataPage != nil && rightDataPage.Parent == dataPage.Parent && rightDataPage.isMergeable() {
-		pointerIndex, found := binarySearchPage[TKey, TValue](parentIndexPage.Container, key)
-		if found {
-			parentIndexPage.deleteAtAndSort(pointerIndex)
-		}
-		parentIndexPage.deleteChildAt(pointerIndex)
-		rightDataPage.Previous = dataPage.Previous
-		// TODO handle first leaf node
-		if parentIndexPage.isDeficient() {
-			tree.handleIndexDeficiency(parentIndexPage, key)
-		}
-		SaveDataPage(tree, dataPage, dataPage.Offset)
-		SaveDataPage(tree, rightDataPage, rightDataPage.Offset)
-		SaveIndexPage(tree, parentIndexPage, parentIndexPage.Offset)
-	}
-
 }
 
 func (tree *BTree[TKey, TValue]) Put(key TKey, value TValue) {
@@ -317,7 +279,6 @@ func (tree *BTree[TKey, TValue]) Put(key TKey, value TValue) {
 			rootPage := tree.splitAndPushDataPage(rootNode)
 			tree.RootOffset = rootPage.Offset
 			tree.IsLeaf = false
-			SaveMetadata[TKey, TValue](tree)
 		}
 	} else {
 		// Find data page
@@ -328,6 +289,8 @@ func (tree *BTree[TKey, TValue]) Put(key TKey, value TValue) {
 			tree.splitAndPushDataPage(dataPageToInsert)
 		}
 	}
+	tree.Count++
+	SaveMetadata(tree)
 }
 
 func (tree *BTree[TKey, TValue]) Get(key TKey) (*TValue, bool) {
@@ -340,16 +303,386 @@ func (tree *BTree[TKey, TValue]) Get(key TKey) (*TValue, bool) {
 	return nil, false
 }
 
-func (tree *BTree[TKey, TValue]) Delete(key TKey) (ok bool) {
-	// TODO handle if tree is empty
+func (tree *BTree[TKey, TValue]) redistributeIndexPages(leftPage, rightPage *IndexPage[TKey, TValue], parent *IndexPage[TKey, TValue], isLeftDonor bool) {
+	var keysToMove int
+	if isLeftDonor {
+		// Calculate the number of keys to move from left to right to balance the pages
+		keysToMove = (leftPage.Count - rightPage.Count) / 2
+		// Move keys and children from the end of leftPage to the beginning of rightPage
+		for i := 0; i < keysToMove; i++ {
+			rightPage.insertAt(0, leftPage.Container[leftPage.Count-keysToMove+i].Key)
+			rightPage.insertChildAt(0, leftPage.Children[leftPage.Count-keysToMove+i])
+			leftPage.deleteAtIndexAndSort(leftPage.Count - keysToMove + i)
+			leftPage.deleteChildAt(leftPage.Count - keysToMove + i)
+		}
+		// Update the parent's key value that points to the right page
+		parentKeyIndex, _ := binarySearchPage[TKey, TValue](parent.Container, rightPage.Container[0].Key)
+		parent.Container[parentKeyIndex].Key = rightPage.Container[0].Key
+	} else {
+		// Calculate the number of keys to move from right to left to balance the pages
+		keysToMove = (rightPage.Count - leftPage.Count) / 2
+		// Move keys and children from the beginning of rightPage to the end of leftPage
+		for i := 0; i < keysToMove; i++ {
+			leftPage.insertAt(leftPage.Count, rightPage.Container[i].Key)
+			leftPage.insertChildAt(leftPage.Count, rightPage.Children[i])
+			rightPage.deleteAtIndexAndSort(i)
+			rightPage.deleteChildAt(i)
+		}
+		// Update the parent's key value that points to the right page
+		parentKeyIndex, _ := binarySearchPage[TKey, TValue](parent.Container, rightPage.Container[0].Key)
+		if parentKeyIndex != -1 && parentKeyIndex < parent.Count+1 {
+			parent.Container[parentKeyIndex-1].Key = rightPage.Container[0].Key
+		}
+	}
 
+	// Save changes to both index pages and the parent index page
+	SaveIndexPage(tree, leftPage, leftPage.Offset)
+	SaveIndexPage(tree, rightPage, rightPage.Offset)
+	SaveIndexPage(tree, parent, parent.Offset)
+}
+
+func (tree *BTree[TKey, TValue]) redistributeIndexPagesFromLeft(leftPage, rightPage *IndexPage[TKey, TValue], parent *IndexPage[TKey, TValue]) {
+	// Move the parent key to the leftPage first
+	parentKeyIndex, _ := binarySearchPage[TKey, TValue](parent.Container, leftPage.Container[leftPage.Count-1].Key)
+
+	copy(rightPage.Container[1:], rightPage.Container[:])
+	rightPage.Container[0] = parent.Container[parentKeyIndex]
+
+	copy(rightPage.Children[1:], rightPage.Children[:])
+	rightPage.Children[0] = leftPage.Children[leftPage.Count]
+	tree.updateChildren(rightPage, leftPage, leftPage.Count)
+	rightPage.Count++
+
+	parent.Container[parentKeyIndex] = leftPage.Container[leftPage.Count-1]
+
+	leftPage.deleteChildAt(leftPage.Count)
+	leftPage.deleteAt(leftPage.Count - 1)
+
+	//redistributeCount := rightPage.Count / 2
+
+	//if redistributeCount > 0 {
+	//	// Move keys from right to left
+	//	for i := 0; i < redistributeCount; i++ {
+	//		leftPage.Container[leftPage.Count] = rightPage.Container[i]
+	//		leftPage.Children[leftPage.Count+1] = rightPage.Children[i]
+	//		tree.updateChildren(rightPage, leftPage, leftPage.Count)
+	//		leftPage.Count++
+	//	}
+	//
+	//	// Adjust counts and shift keys in rightPage
+	//	copy(rightPage.Container[:], rightPage.Container[redistributeCount:rightPage.Count])
+	//	copy(rightPage.Children[:], rightPage.Children[redistributeCount:rightPage.Count+1]) // +1 for the extra child pointer
+	//	rightPage.Count -= redistributeCount
+	//}
+
+	// Persist changes
+	SaveIndexPage(tree, leftPage, leftPage.Offset)
+	SaveIndexPage(tree, rightPage, rightPage.Offset)
+	SaveIndexPage(tree, parent, parent.Offset)
+}
+
+func (tree *BTree[TKey, TValue]) redistributeIndexPagesFromRight(leftPage, rightPage *IndexPage[TKey, TValue], parent *IndexPage[TKey, TValue]) {
+	// Move the parent key to the leftPage first
+	parentKeyIndex, _ := binarySearchPage[TKey, TValue](parent.Container, rightPage.Container[0].Key)
+	if parentKeyIndex > 0 {
+		leftPage.Container[leftPage.Count] = parent.Container[parentKeyIndex-1]
+		leftPage.Children[leftPage.Count+1] = rightPage.Children[0]
+		tree.updateChildren(leftPage, rightPage, 0)
+		leftPage.Count++
+
+		parent.Container[parentKeyIndex-1] = rightPage.Container[0]
+
+		rightPage.deleteAtIndexAndSort(0)
+		copy(rightPage.Children[:], rightPage.Children[1:])
+	}
+
+	//redistributeCount := rightPage.Count / 2
+
+	//if redistributeCount > 0 {
+	//	// Move keys from right to left
+	//	for i := 0; i < redistributeCount; i++ {
+	//		leftPage.Container[leftPage.Count] = rightPage.Container[i]
+	//		leftPage.Children[leftPage.Count+1] = rightPage.Children[i]
+	//		tree.updateChildren(leftPage, rightPage, i)
+	//		leftPage.Count++
+	//	}
+	//
+	//	// Adjust counts and shift keys in rightPage
+	//	copy(rightPage.Container[:], rightPage.Container[redistributeCount:rightPage.Count])
+	//	copy(rightPage.Children[:], rightPage.Children[redistributeCount:rightPage.Count+1]) // +1 for the extra child pointer
+	//	rightPage.Count -= redistributeCount
+	//}
+
+	// Persist changes
+	SaveIndexPage(tree, leftPage, leftPage.Offset)
+	SaveIndexPage(tree, rightPage, rightPage.Offset)
+	SaveIndexPage(tree, parent, parent.Offset)
+}
+
+func (tree *BTree[TKey, TValue]) updateChildren(toParentPage, fromParentPage *IndexPage[TKey, TValue], childIndex int) {
+	if fromParentPage.IsChildrenDataPage {
+		childDataPage := ReadDataPage(tree, fromParentPage.Children[childIndex])
+		childDataPage.Parent = toParentPage.Offset
+		SaveDataPage(tree, childDataPage, childDataPage.Offset)
+	} else {
+		childIndexPage := ReadIndexPage(tree, fromParentPage.Children[childIndex])
+		childIndexPage.Parent = toParentPage.Offset
+		SaveIndexPage(tree, childIndexPage, childIndexPage.Offset)
+	}
+}
+
+func (tree *BTree[TKey, TValue]) updateParentAfterMerge(parentPage *IndexPage[TKey, TValue], childKey TKey, isFromLeft bool) TKey {
+	var keyIndex int
+	keyIndex, _ = binarySearchPage[TKey, TValue](parentPage.Container, childKey)
+	if !isFromLeft {
+		keyIndex--
+	}
+
+	borrowedKey := parentPage.Container[keyIndex].Key
+	copy(parentPage.Container[keyIndex:], parentPage.Container[keyIndex+1:])
+	copy(parentPage.Children[keyIndex+1:], parentPage.Children[keyIndex+2:])
+	parentPage.Count--
+
+	// Save the updated parent page
+	SaveIndexPage(tree, parentPage, parentPage.Offset)
+
+	return borrowedKey
+}
+
+func (tree *BTree[TKey, TValue]) mergeIndexPages(leftPage, rightPage *IndexPage[TKey, TValue], borrowKey TKey) {
+	leftPage.Container[leftPage.Count] = newIndexNode(borrowKey)
+	leftPage.Count++
+
+	// Merge internal nodes
+	for i := 0; i < rightPage.Count; i++ {
+		leftPage.Container[leftPage.Count] = rightPage.Container[i]
+		leftPage.Children[leftPage.Count] = rightPage.Children[i]
+		tree.updateChildren(leftPage, rightPage, i)
+		leftPage.Count++
+	}
+
+	// Last child pointer
+	if rightPage.Children[rightPage.Count] != -1 {
+		leftPage.Children[leftPage.Count] = rightPage.Children[rightPage.Count]
+		tree.updateChildren(leftPage, rightPage, rightPage.Count)
+	}
+
+	if rightPage.Next != -1 {
+		nextRightPage := ReadIndexPage(tree, rightPage.Next)
+		nextRightPage.Previous = leftPage.Offset
+		leftPage.Next = rightPage.Next
+		SaveIndexPage(tree, nextRightPage, nextRightPage.Offset)
+	} else {
+		leftPage.Next = -1 // Right page was the last one
+	}
+	SaveIndexPage(tree, leftPage, leftPage.Offset)
+	//TODO  Free right page
+}
+
+func (tree *BTree[TKey, TValue]) handleIndexPageUnderflow(indexPage *IndexPage[TKey, TValue]) {
+	parent, leftSibling, rightSibling := tree.readRelationsOfIndexPage(indexPage)
+
+	// If the index page is the root and has only one child, make the child the new root
+	if parent == nil {
+		if indexPage.Count == 0 {
+			if indexPage.IsChildrenDataPage {
+				tree.RootOffset = indexPage.Children[0]
+				tree.IsLeaf = true
+			} else {
+				childIndexPage := ReadIndexPage(tree, indexPage.Children[0])
+				tree.RootOffset = childIndexPage.Offset
+				tree.IsLeaf = false
+			}
+		}
+		return
+	}
+
+	if leftSibling != nil && leftSibling.isLendable() {
+		tree.redistributeIndexPagesFromLeft(leftSibling, indexPage, parent)
+	} else if rightSibling != nil && rightSibling.isLendable() {
+		tree.redistributeIndexPagesFromRight(indexPage, rightSibling, parent)
+	} else if leftSibling != nil {
+		key := tree.updateParentAfterMerge(parent, leftSibling.Container[0].Key, true)
+		tree.mergeIndexPages(leftSibling, indexPage, key)
+	} else if rightSibling != nil {
+		key := tree.updateParentAfterMerge(parent, rightSibling.Container[0].Key, false)
+		tree.mergeIndexPages(indexPage, rightSibling, key)
+	}
+
+	// If the parent is deficient after removal, handle the deficiency
+	if parent.isDeficient() {
+		tree.handleIndexPageUnderflow(parent)
+	}
+}
+
+func printPage[TKey cmp.Ordered, TValue any, TTPage TPage[TKey, TValue]](page TTPage) {
+	if page == nil {
+		return
+	}
+	switch p := any(page).(type) {
+	case *DataPage[TKey, TValue]:
+		for i := 0; i < p.Count; i++ {
+			log.Printf("%v ", p.Container[i])
+		}
+	case *IndexPage[TKey, TValue]:
+		for i := 0; i < p.Count; i++ {
+			log.Printf("%v ", p.Container[i])
+		}
+	}
+}
+
+func (tree *BTree[TKey, TValue]) handleUnderflow(dataPage *DataPage[TKey, TValue], key TKey) {
+	parent, leftSibling, rightSibling := tree.readRelationsOfLeafPage(dataPage)
+
+	if leftSibling != nil && leftSibling.isLendable() {
+		tree.redistributeLeafPagesFromLeft(leftSibling, dataPage, parent)
+	} else if rightSibling != nil && rightSibling.isLendable() {
+		tree.redistributeLeafPagesFromRight(dataPage, rightSibling, parent)
+	} else if leftSibling != nil {
+		tree.mergeLeafPages(leftSibling, dataPage, parent, key)
+	} else if rightSibling != nil {
+		tree.mergeLeafPages(dataPage, rightSibling, parent, rightSibling.Container[0].Key)
+	}
+}
+
+func (tree *BTree[TKey, TValue]) redistributeLeafPagesFromLeft(leftPage, rightPage *DataPage[TKey, TValue], parent *IndexPage[TKey, TValue]) {
+
+	// Step 2: Move keys from left to right
+	// Shift existing keys in rightPage to make room
+	copy(rightPage.Container[1:], rightPage.Container[:rightPage.Count])
+
+	rightPage.Container[0] = leftPage.Container[leftPage.Count-1]
+	leftPage.deleteAt(leftPage.Count - 1)
+	// Adjust counts
+	rightPage.Count++
+
+	// Step 3: Update parent key to reflect the new smallest key in the right page
+	parentKeyIndex, _ := binarySearchPage[TKey, TValue](parent.Container, rightPage.Container[0].Key)
+	parent.Container[parentKeyIndex].Key = rightPage.Container[0].Key
+
+	// Step 4: Persist changes
+	SaveDataPage(tree, leftPage, leftPage.Offset)
+	SaveDataPage(tree, rightPage, rightPage.Offset)
+	SaveIndexPage(tree, parent, parent.Offset)
+}
+
+func (tree *BTree[TKey, TValue]) redistributeLeafPagesFromRight(leftPage, rightPage *DataPage[TKey, TValue], parent *IndexPage[TKey, TValue]) {
+	leftPage.Container[leftPage.Count] = rightPage.Container[0]
+	// Adjust counts
+	leftPage.Count++
+	rightPage.Count--
+	// Shift keys in rightPage to remove the moved keys
+	copy(rightPage.Container[:], rightPage.Container[1:])
+
+	// Step 3: Update parent key to reflect the new smallest key in the right page
+	parentKeyIndex, _ := binarySearchPage[TKey, TValue](parent.Container, rightPage.Container[0].Key)
+	if parentKeyIndex > 0 {
+		parent.Container[parentKeyIndex-1].Key = rightPage.Container[0].Key
+	}
+
+	// Step 4: Persist changes
+	SaveDataPage(tree, leftPage, leftPage.Offset)
+	SaveDataPage(tree, rightPage, rightPage.Offset)
+	SaveIndexPage(tree, parent, parent.Offset)
+}
+
+func (tree *BTree[TKey, TValue]) mergeLeafPages(leftPage, rightPage *DataPage[TKey, TValue], parent *IndexPage[TKey, TValue], key TKey) {
+	// Step 1: Merge contents
+	for _, item := range rightPage.Container[:rightPage.Count] {
+		leftPage.Container[leftPage.Count] = item
+		leftPage.Count++
+	}
+
+	// Step 2: Update sibling links
+	if rightPage.Next != -1 {
+		nextRightPage := ReadDataPage(tree, rightPage.Next)
+		nextRightPage.Previous = leftPage.Offset
+		leftPage.Next = rightPage.Next
+		SaveDataPage(tree, nextRightPage, nextRightPage.Offset)
+	} else {
+		leftPage.Next = -1 // Right page was the last one
+	}
+
+	// Step 3: Remove right page (Assuming a function for freeing page space exists)
+	// TODO FreeDataPage(tree, rightPage.Offset)
+
+	// Step 4: Update parent
+	var parentKeyIndex int
+	if rightPage.Count > 0 {
+		parentKeyIndex, _ = binarySearchPage[TKey, TValue](parent.Container, rightPage.Container[0].Key)
+	} else {
+		// Find the key in the parent that points to the rightPage by using the leftPage
+		parentKeyIndex, _ = binarySearchPage[TKey, TValue](parent.Container, leftPage.Container[0].Key)
+		parentKeyIndex++ // Increment to get the index of the key that pointed to rightPage
+	}
+
+	copy(parent.Container[parentKeyIndex:], parent.Container[parentKeyIndex+1:])
+	copy(parent.Children[parentKeyIndex+1:], parent.Children[parentKeyIndex+2:])
+	parent.Count--
+
+	// Step 5: Save changes
+	SaveDataPage(tree, leftPage, leftPage.Offset)
+	//SaveIndexPage(tree, parent, parent.Offset)
+
+	if parent.isDeficient() {
+		// Handle underflow for the parent index page
+		tree.handleIndexPageUnderflow(parent)
+	} else {
+		SaveIndexPage(tree, parent, parent.Offset)
+	}
+}
+
+func (tree *BTree[TKey, TValue]) updateIfPresentInInternalPage(dataPage *DataPage[TKey, TValue], key TKey, inOrderKey TKey) {
+	currentPageOffset := dataPage.Parent
+
+	for currentPageOffset != -1 {
+		currentIndexPage := ReadIndexPage(tree, currentPageOffset)
+		index, found := binarySearchPage[TKey, TValue](currentIndexPage.Container, key)
+
+		if found {
+			currentIndexPage.Container[index].Key = inOrderKey
+			SaveIndexPage(tree, currentIndexPage, currentIndexPage.Offset)
+		}
+		currentPageOffset = currentIndexPage.Parent
+	}
+}
+
+func (tree *BTree[TKey, TValue]) getInOrderSuccessor(dataNodeIndex int, page *DataPage[TKey, TValue]) *TKey {
+	if dataNodeIndex < page.Count-1 {
+		return &page.Container[dataNodeIndex+1].Key
+	}
+
+	if page.Next != -1 {
+		nextPage := ReadDataPage(tree, page.Next)
+		return &nextPage.Container[0].Key
+	}
+	return nil
+}
+
+func (tree *BTree[TKey, TValue]) Delete(key TKey) (ok bool) {
+	if tree.Count == 0 {
+		return false
+	}
 	dataPage := tree.findDataPageFromIndexRoot(key)
 	dataNodeIndex, found := binarySearchPage[TKey, TValue](dataPage.Container, key)
 	if !found {
 		return false
 	}
 
+	// Update Parents if needed
+	inOrderKey := tree.getInOrderSuccessor(dataNodeIndex, dataPage)
+	if inOrderKey != nil {
+		tree.updateIfPresentInInternalPage(dataPage, key, *inOrderKey)
+	}
+
 	dataPage.deleteAtIndexAndSort(dataNodeIndex)
-	tree.handleLeafDeficiency(dataPage, key)
+	if dataPage.Parent != -1 && dataPage.isDeficient() {
+		tree.handleUnderflow(dataPage, key)
+	} else {
+		SaveDataPage(tree, dataPage, dataPage.Offset)
+	}
+
+	tree.Count--
+	SaveMetadata(tree)
 	return true
 }

@@ -70,7 +70,7 @@ type PageBlockType struct {
 }
 
 type PageBlock[TKey cmp.Ordered, TValue any] interface {
-	*DataPage[TKey, TValue] | *IndexPage[TKey, TValue] | *BTree[TKey, TValue] | *PageBlockType
+	*DataPage[TKey, TValue] | *IndexPage[TKey, TValue] | *BTree[TKey, TValue]
 }
 
 func SaveAt[TKey cmp.Ordered, TValue any, TPageBlock PageBlock[TKey, TValue]](tree *BTree[TKey, TValue], page TPageBlock, offset int, length int) {
@@ -99,16 +99,16 @@ func SaveAt[TKey cmp.Ordered, TValue any, TPageBlock PageBlock[TKey, TValue]](tr
 
 func SaveDataPage[TKey cmp.Ordered, TValue any](tree *BTree[TKey, TValue], page *DataPage[TKey, TValue], offset int) {
 	page.Offset = offset
-	SaveAt[TKey, TValue](tree, page, offset, PAGE_BLOCK_SIZE)
+	SaveAt(tree, page, offset, PAGE_BLOCK_SIZE)
 }
 
 func SaveIndexPage[TKey cmp.Ordered, TValue any](tree *BTree[TKey, TValue], page *IndexPage[TKey, TValue], offset int) {
 	page.Offset = offset
-	SaveAt[TKey, TValue](tree, page, offset, INDEX_BLOCK_SIZE)
+	SaveAt(tree, page, offset, INDEX_BLOCK_SIZE)
 }
 
 func SaveMetadata[TKey cmp.Ordered, TValue any](tree *BTree[TKey, TValue]) {
-	SaveAt[TKey, TValue](tree, tree, 0, METADATA_SIZE)
+	SaveAt(tree, tree, 0, METADATA_SIZE)
 }
 
 func ReadAt[TKey cmp.Ordered, TValue any, TPageBlock PageBlock[TKey, TValue]](indexName string, page TPageBlock, offset int, length int) TPageBlock {

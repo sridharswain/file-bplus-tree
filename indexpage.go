@@ -25,9 +25,25 @@ func (ip *IndexPage[TKey, TValue]) isDeficient() bool {
 	return ip.Count < ip.tree.MinIndexCount
 }
 
+func (ip *IndexPage[TKey, TValue]) isLendable() bool {
+	return ip.Count > ip.tree.MinIndexCount
+}
+
+func (ip *IndexPage[TKey, TValue]) isMergeable() bool {
+	return ip.Count == ip.tree.MinIndexCount
+}
+
+func (ip *IndexPage[TKey, TValue]) clear() {
+	ip.Container = make([]IndexNode[TKey], ip.tree.Order)
+	ip.Children = make([]int, ip.tree.Order+1)
+	ip.Next = 0
+	ip.Previous = 0
+	ip.Count = 0
+}
+
 func newIndexNode[TKey cmp.Ordered](key TKey) IndexNode[TKey] {
 	return IndexNode[TKey]{
-		Key: key,
+		Key:    key,
 		Exists: true,
 	}
 }
@@ -55,7 +71,7 @@ func newIndexPage[TKey cmp.Ordered, TValue any](tree *BTree[TKey, TValue]) *Inde
 	return newIndexPage
 }
 
-func (ip *IndexPage[TKey, TValue]) isFull() bool {
+func (ip *IndexPage[TKey, TValue]) isOverflowing() bool {
 	return ip.Count == ip.tree.MaxIndexCount
 }
 
@@ -120,7 +136,7 @@ func (ip *IndexPage[TKey, TValue]) splitChildrenFrom(newIndexPage *IndexPage[TKe
 	}
 }
 
-func (ip *IndexPage[TKey, TValue]) deleteAtAndSort(index int) {
+func (ip *IndexPage[TKey, TValue]) deleteAtIndexAndSort(index int) {
 	copy(ip.Container[index:], ip.Container[index+1:])
 	ip.Count--
 }
