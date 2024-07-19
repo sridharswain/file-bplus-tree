@@ -358,23 +358,6 @@ func (tree *BTree[TKey, TValue]) redistributeIndexPagesFromLeft(leftPage, rightP
 	leftPage.deleteChildAt(leftPage.Count)
 	leftPage.deleteAt(leftPage.Count - 1)
 
-	//redistributeCount := rightPage.Count / 2
-
-	//if redistributeCount > 0 {
-	//	// Move keys from right to left
-	//	for i := 0; i < redistributeCount; i++ {
-	//		leftPage.Container[leftPage.Count] = rightPage.Container[i]
-	//		leftPage.Children[leftPage.Count+1] = rightPage.Children[i]
-	//		tree.updateChildren(rightPage, leftPage, leftPage.Count)
-	//		leftPage.Count++
-	//	}
-	//
-	//	// Adjust counts and shift keys in rightPage
-	//	copy(rightPage.Container[:], rightPage.Container[redistributeCount:rightPage.Count])
-	//	copy(rightPage.Children[:], rightPage.Children[redistributeCount:rightPage.Count+1]) // +1 for the extra child pointer
-	//	rightPage.Count -= redistributeCount
-	//}
-
 	// Persist changes
 	SaveIndexPage(tree, leftPage, leftPage.Offset)
 	SaveIndexPage(tree, rightPage, rightPage.Offset)
@@ -395,23 +378,6 @@ func (tree *BTree[TKey, TValue]) redistributeIndexPagesFromRight(leftPage, right
 		rightPage.deleteAtIndexAndSort(0)
 		copy(rightPage.Children[:], rightPage.Children[1:])
 	}
-
-	//redistributeCount := rightPage.Count / 2
-
-	//if redistributeCount > 0 {
-	//	// Move keys from right to left
-	//	for i := 0; i < redistributeCount; i++ {
-	//		leftPage.Container[leftPage.Count] = rightPage.Container[i]
-	//		leftPage.Children[leftPage.Count+1] = rightPage.Children[i]
-	//		tree.updateChildren(leftPage, rightPage, i)
-	//		leftPage.Count++
-	//	}
-	//
-	//	// Adjust counts and shift keys in rightPage
-	//	copy(rightPage.Container[:], rightPage.Container[redistributeCount:rightPage.Count])
-	//	copy(rightPage.Children[:], rightPage.Children[redistributeCount:rightPage.Count+1]) // +1 for the extra child pointer
-	//	rightPage.Count -= redistributeCount
-	//}
 
 	// Persist changes
 	SaveIndexPage(tree, leftPage, leftPage.Offset)
@@ -539,9 +505,9 @@ func (tree *BTree[TKey, TValue]) handleUnderflow(dataPage *DataPage[TKey, TValue
 	} else if rightSibling != nil && rightSibling.isLendable() {
 		tree.redistributeLeafPagesFromRight(dataPage, rightSibling, parent)
 	} else if leftSibling != nil {
-		tree.mergeLeafPages(leftSibling, dataPage, parent, key)
+		tree.mergeLeafPages(leftSibling, dataPage, parent)
 	} else if rightSibling != nil {
-		tree.mergeLeafPages(dataPage, rightSibling, parent, rightSibling.Container[0].Key)
+		tree.mergeLeafPages(dataPage, rightSibling, parent)
 	}
 }
 
@@ -586,7 +552,7 @@ func (tree *BTree[TKey, TValue]) redistributeLeafPagesFromRight(leftPage, rightP
 	SaveIndexPage(tree, parent, parent.Offset)
 }
 
-func (tree *BTree[TKey, TValue]) mergeLeafPages(leftPage, rightPage *DataPage[TKey, TValue], parent *IndexPage[TKey, TValue], key TKey) {
+func (tree *BTree[TKey, TValue]) mergeLeafPages(leftPage, rightPage *DataPage[TKey, TValue], parent *IndexPage[TKey, TValue]) {
 	// Step 1: Merge contents
 	for _, item := range rightPage.Container[:rightPage.Count] {
 		leftPage.Container[leftPage.Count] = item
@@ -659,10 +625,28 @@ func (tree *BTree[TKey, TValue]) getInOrderSuccessor(dataNodeIndex int, page *Da
 	return nil
 }
 
+func (tree *BTree[TKey, TValue]) updateNodeIfKeyPresentInInternalNode(dataNodeIndex int, key TKey, dataPage *DataPage[TKey, TValue]) {
+	// Update Parents if needed
+	inOrderKey := tree.getInOrderSuccessor(dataNodeIndex, dataPage)
+	if inOrderKey != nil {
+		tree.updateIfPresentInInternalPage(dataPage, key, *inOrderKey)
+	}
+}
+
+func (tree *BTree[TKey, TValue]) deleteFromDataPageAndPropagate(dataNodeIndex int, key TKey, dataPage *DataPage[TKey, TValue]) {
+	dataPage.deleteAtIndexAndSort(dataNodeIndex)
+	if dataPage.Parent != -1 && dataPage.isDeficient() {
+		tree.handleUnderflow(dataPage, key)
+	} else {
+		SaveDataPage(tree, dataPage, dataPage.Offset)
+	}
+}
+
 func (tree *BTree[TKey, TValue]) Delete(key TKey) (ok bool) {
 	if tree.Count == 0 {
 		return false
 	}
+
 	dataPage := tree.findDataPageFromIndexRoot(key)
 	dataNodeIndex, found := binarySearchPage[TKey, TValue](dataPage.Container, key)
 	if !found {
@@ -670,18 +654,12 @@ func (tree *BTree[TKey, TValue]) Delete(key TKey) (ok bool) {
 	}
 
 	// Update Parents if needed
-	inOrderKey := tree.getInOrderSuccessor(dataNodeIndex, dataPage)
-	if inOrderKey != nil {
-		tree.updateIfPresentInInternalPage(dataPage, key, *inOrderKey)
-	}
+	tree.updateNodeIfKeyPresentInInternalNode(dataNodeIndex, key, dataPage)
 
-	dataPage.deleteAtIndexAndSort(dataNodeIndex)
-	if dataPage.Parent != -1 && dataPage.isDeficient() {
-		tree.handleUnderflow(dataPage, key)
-	} else {
-		SaveDataPage(tree, dataPage, dataPage.Offset)
-	}
+	// Delete from data page and propagate to index pages
+	tree.deleteFromDataPageAndPropagate(dataNodeIndex, key, dataPage)
 
+	// Update tree
 	tree.Count--
 	SaveMetadata(tree)
 	return true
