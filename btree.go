@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"log"
 	"math"
+	"os"
 )
 
 type TPage[TKey cmp.Ordered, TValue any] interface {
@@ -39,6 +40,14 @@ type BTree[TKey cmp.Ordered, TValue any] struct {
 
 func (tree *BTree[TKey, TValue]) IsEmpty() bool {
 	return tree.Count == 0
+}
+
+func indexFileExists(indexName string) bool {
+	if _, err := os.Stat(indexName); err == nil {
+		return true
+	}
+
+	return false
 }
 
 func New[TKey cmp.Ordered, TValue any](indexName string, order int) *BTree[TKey, TValue] {

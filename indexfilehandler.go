@@ -172,14 +172,6 @@ func ReadMetadata[TKey cmp.Ordered, TValue any](indexName string) *BTree[TKey, T
 	return ReadAt[TKey, TValue](indexName, &page, 0, METADATA_SIZE)
 }
 
-func indexFileExists(indexName string) bool {
-	if _, err := os.Stat(indexName); err == nil {
-		return true
-	}
-
-	return false
-}
-
 func formatBytesToWrite(binBuffer *bytes.Buffer, length int) []byte {
 	var writeBytes []byte = make([]byte, length)
 	dataBytes := binBuffer.Bytes()
