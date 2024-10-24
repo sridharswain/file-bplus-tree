@@ -1,32 +1,29 @@
-package main
+package btree
 
-import (
-	"cmp"
-)
+import "os"
 
-type BleedDataPage[TKey cmp.Ordered, TValue any] struct {
+type BleedDataPage[TKey, TValue any] struct {
 	Container []*DataNode[TKey, TValue]
 	BleedPage int
 }
 
-type DataNode[TKey cmp.Ordered, TValue any] struct {
+type DataNode[TKey, TValue any] struct {
 	Key    TKey
 	Value  TValue
 	Exists bool
 }
 
-type DataPage[TKey cmp.Ordered, TValue any] struct {
+type DataPage[TKey, TValue any] struct {
 	tree           *BTree[TKey, TValue]
 	Count          int
 	Container      []DataNode[TKey, TValue]
 	Next, Previous int
 	Parent         int
-	PageType       string
 	Offset         int
 	bleedPage      int
 }
 
-func newDataNode[TKey cmp.Ordered, TValue any](key TKey, value TValue) DataNode[TKey, TValue] {
+func newDataNode[TKey, TValue any](key TKey, value TValue) DataNode[TKey, TValue] {
 	return DataNode[TKey, TValue]{
 		Key:    key,
 		Value:  value,
@@ -34,7 +31,7 @@ func newDataNode[TKey cmp.Ordered, TValue any](key TKey, value TValue) DataNode[
 	}
 }
 
-func newDataPage[TKey cmp.Ordered, TValue any](tree *BTree[TKey, TValue]) *DataPage[TKey, TValue] {
+func newDataPage[TKey, TValue any](tree *BTree[TKey, TValue], file *os.File) *DataPage[TKey, TValue] {
 
 	page := &DataPage[TKey, TValue]{
 		tree:      tree,
@@ -44,12 +41,11 @@ func newDataPage[TKey cmp.Ordered, TValue any](tree *BTree[TKey, TValue]) *DataP
 		Next:      -1,
 		Previous:  -1,
 		bleedPage: -1,
-		PageType:  DATA_PAGE,
 	}
 
-	SaveDataPage[TKey, TValue](tree, page, tree.LatestOffset)
-	tree.LatestOffset += PAGE_BLOCK_SIZE
-	SaveMetadata(tree)
+	SaveDataPage[TKey, TValue](tree, page, file, tree.LatestOffset)
+	tree.LatestOffset += PageBlockSize
+	SaveMetadata(tree, file)
 	return page
 }
 
@@ -77,11 +73,11 @@ func (dp *DataPage[TKey, TValue]) find(key TKey) (*DataNode[TKey, TValue], bool)
 	return nil, false
 }
 
-func (dp *DataPage[TKey, TValue]) findAndUpdateIfExists(key TKey, value TValue) (*DataNode[TKey, TValue], int, bool /*isFound*/) {
+func (dp *DataPage[TKey, TValue]) findAndUpdateIfExists(key TKey, file *os.File, value TValue) (*DataNode[TKey, TValue], int, bool /*isFound*/) {
 	index, found := binarySearchPage[TKey, TValue](dp.Container, key)
 	if found {
 		dp.Container[index].Value = value
-		SaveDataPage[TKey, TValue](dp.tree, dp, dp.Offset)
+		SaveDataPage[TKey, TValue](dp.tree, dp, file, dp.Offset)
 		return &dp.Container[index], index, true
 	}
 	return nil, index, false
@@ -106,8 +102,8 @@ func (dp *DataPage[TKey, TValue]) deleteAt(index int) {
 	dp.Count--
 }
 
-func (dp *DataPage[TKey, TValue]) split() *DataPage[TKey, TValue] {
-	splitDict := newDataPage[TKey, TValue](dp.tree)
+func (dp *DataPage[TKey, TValue]) split(file *os.File) *DataPage[TKey, TValue] {
+	splitDict := newDataPage[TKey, TValue](dp.tree, file)
 
 	// Create a new data page and copy second half data
 	splitDict.Count = copy(splitDict.Container[0:], dp.Container[dp.tree.MidPoint:])
